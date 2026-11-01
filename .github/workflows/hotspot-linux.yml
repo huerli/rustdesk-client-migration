@@ -16,7 +16,6 @@ env:
   RUST_VERSION: stable
   FLUTTER_VERSION: "3.24.5"
   VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VERSION: "1.5.0"
 
 jobs:
@@ -74,7 +73,7 @@ jobs:
         shell: bash
         run: |
           sudo apt install -y libva-dev
-          "$VCPKG_ROOT/vcpkg" install \
+          VCPKG_BUILD_TYPE=release "$VCPKG_ROOT/vcpkg" install \
             --triplet x64-linux \
             --x-install-root="$VCPKG_ROOT/installed"
 
