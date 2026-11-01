@@ -108,6 +108,7 @@ jobs:
             rm rust.tar.gz
             cd "rust-${{ env.RUST_TOOLCHAIN_VERSION }}-x86_64-unknown-linux-gnu"
             ./install.sh
+            cd /opt
             rm -rf "/opt/rust-${{ env.RUST_TOOLCHAIN_VERSION }}-x86_64-unknown-linux-gnu"
             wget "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz"
             tar -xf "flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz"
