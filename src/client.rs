@@ -1795,7 +1795,7 @@ impl Client {
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
-            if !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()) {
+            if !key.is_empty() {
                 secure_tcp(&mut socket, key).await?;
             }
 
@@ -5838,6 +5838,63 @@ mod kx_tests {
     };
 
     const PEER_ID: &str = "123456789";
+
+    #[tokio::test]
+    async fn test_relay_without_token_completes_server_key_exchange() {
+        let (pk, sk) = sign::gen_keypair();
+        let listener = hbb_common::tcp::new_listener("127.0.0.1:0", false)
+            .await
+            .unwrap();
+        let host = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let (stream, addr) = listener.accept().await.unwrap();
+            let mut conn = FramedStream::from(stream, addr);
+            let (pk, secret) = box_::gen_keypair();
+            let mut msg = RendezvousMessage::new();
+            msg.set_key_exchange(KeyExchange {
+                keys: vec![sign::sign(&pk.0, &sk).into()],
+                ..Default::default()
+            });
+            conn.send(&msg).await.unwrap();
+            let reply = conn.next().await.unwrap().unwrap();
+            let Some(rendezvous_message::Union::KeyExchange(exchange)) =
+                RendezvousMessage::parse_from_bytes(&reply).unwrap().union
+            else {
+                panic!("relay request skipped the server key exchange");
+            };
+            conn.set_key(Encrypt::decode(&exchange.keys[1], &exchange.keys[0], &secret).unwrap());
+            let request = conn.next().await.unwrap().unwrap();
+            let Some(rendezvous_message::Union::RequestRelay(request)) =
+                RendezvousMessage::parse_from_bytes(&request).unwrap().union
+            else {
+                panic!("expected an encrypted relay request");
+            };
+            assert_eq!(request.id, PEER_ID);
+            assert!(request.token.is_empty() && request.switch_code.is_empty());
+            msg.set_relay_response(RelayResponse {
+                refuse_reason: "relay request received".to_owned(),
+                ..Default::default()
+            });
+            conn.send(&msg).await.unwrap();
+        });
+        let result = timeout(
+            3000,
+            Client::request_relay(
+                PEER_ID,
+                String::new(),
+                &host,
+                true,
+                &crate::encode64(pk.0),
+                "",
+                ConnType::DEFAULT_CONN,
+                "",
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.err().unwrap().to_string(), "relay request received");
+        server.await.unwrap();
+    }
 
     /// What the stand-in controlled peer saw: the version the controller picked, and whether the
     /// controller's first application message decrypted.
