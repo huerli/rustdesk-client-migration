@@ -252,6 +252,14 @@ class MyTheme {
   static const Color accent = Color(0xFF0071FF);
   static const Color accent50 = Color(0x770071FF);
   static const Color accent80 = Color(0xAA0071FF);
+  static const Color canvasLight = Color(0xFFF6F7F9);
+  static const Color surfaceLight = Color(0xFFFFFFFF);
+  static const Color borderLight = Color(0xFFE5EAF2);
+  static const Color textMutedLight = Color(0xFF64748B);
+  static const Color canvasDark = Color(0xFF14161B);
+  static const Color surfaceDark = Color(0xFF1C1F26);
+  static const Color borderDark = Color(0xFF2C313C);
+  static const Color textMutedDark = Color(0xFF94A3B8);
   static const Color canvasColor = Color(0xFF212121);
   static const Color border = Color(0xFFCCCCCC);
   static const Color idColor = Color(0xFF00B6F0);
@@ -271,8 +279,18 @@ class MyTheme {
   );
 
   static SwitchThemeData switchTheme() {
+    final activeColor = Color(0xFFFF4F9A);
     return SwitchThemeData(
-        splashRadius: (isDesktop || isWebDesktop) ? 0 : kRadialReactionRadius);
+      splashRadius: (isDesktop || isWebDesktop) ? 0 : kRadialReactionRadius,
+      thumbColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected) ? Colors.white : null;
+      }),
+      trackColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected)
+            ? activeColor
+            : null;
+      }),
+    );
   }
 
   static RadioThemeData radioTheme() {
@@ -373,42 +391,86 @@ class MyTheme {
     // https://stackoverflow.com/questions/77537315/after-upgrading-to-flutter-3-16-the-app-bar-background-color-button-size-and
     useMaterial3: false,
     brightness: Brightness.light,
-    hoverColor: Color.fromARGB(255, 224, 224, 224),
-    scaffoldBackgroundColor: Colors.white,
-    dialogBackgroundColor: Colors.white,
+    hoverColor: Color(0xFFEFF4FA),
+    scaffoldBackgroundColor: surfaceLight,
+    dialogBackgroundColor: surfaceLight,
+    focusColor: accent.withOpacity(0.08),
     appBarTheme: AppBarTheme(
       shadowColor: Colors.transparent,
     ),
     dialogTheme: DialogTheme(
-      elevation: 15,
+      elevation: 18,
+      backgroundColor: surfaceLight,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18.0),
+        borderRadius: BorderRadius.circular(16.0),
         side: BorderSide(
           width: 1,
-          color: grayBg,
+          color: borderLight,
         ),
       ),
     ),
     scrollbarTheme: scrollbarTheme,
     inputDecorationTheme: isDesktop
         ? InputDecorationTheme(
-            fillColor: grayBg,
+            fillColor: Color(0xFFF7F9FC),
+            hintStyle: TextStyle(color: textMutedLight),
+            contentPadding:
+                EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             filled: true,
             isDense: true,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: borderLight),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: borderLight),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: accent, width: 1.5),
             ),
           )
         : null,
     textTheme: const TextTheme(
-        titleLarge: TextStyle(fontSize: 19, color: Colors.black87),
-        titleSmall: TextStyle(fontSize: 14, color: Colors.black87),
-        bodySmall: TextStyle(fontSize: 12, color: Colors.black87, height: 1.25),
+        titleLarge: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.2,
+            color: Colors.black87),
+        titleMedium: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87),
+        titleSmall: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87),
+        bodySmall:
+            TextStyle(fontSize: 12, color: textMutedLight, height: 1.4),
         bodyMedium:
-            TextStyle(fontSize: 14, color: Colors.black87, height: 1.25),
-        labelLarge: TextStyle(fontSize: 16.0, color: MyTheme.accent80)),
-    cardColor: grayBg,
-    hintColor: Color(0xFFAAAAAA),
+            TextStyle(fontSize: 14, color: Colors.black87, height: 1.45),
+        labelLarge: TextStyle(
+            fontSize: 15.0,
+            fontWeight: FontWeight.w600,
+            color: MyTheme.accent)),
+    cardColor: surfaceLight,
+    cardTheme: CardTheme(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: surfaceLight,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: borderLight),
+      ),
+    ),
+    hintColor: textMutedLight,
+    dividerTheme: DividerThemeData(
+      color: borderLight,
+      thickness: 1,
+      space: 1,
+    ),
     visualDensity: VisualDensity.adaptivePlatformDensity,
     tabBarTheme: const TabBarTheme(
       labelColor: Colors.black87,
@@ -430,8 +492,12 @@ class MyTheme {
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: MyTheme.accent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        padding: EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+        textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0),
+          borderRadius: BorderRadius.circular(10.0),
         ),
       ),
     ),
@@ -439,8 +505,11 @@ class MyTheme {
       style: OutlinedButton.styleFrom(
         backgroundColor: grayBg,
         foregroundColor: Colors.black87,
+        side: BorderSide(color: borderLight),
+        padding: EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+        textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0),
+          borderRadius: BorderRadius.circular(10.0),
         ),
       ),
     ),
@@ -450,17 +519,22 @@ class MyTheme {
     listTileTheme: listTileTheme,
     menuBarTheme: MenuBarThemeData(
         style:
-            MenuStyle(backgroundColor: MaterialStatePropertyAll(Colors.white))),
+            MenuStyle(backgroundColor: MaterialStatePropertyAll(surfaceLight))),
     colorScheme: ColorScheme.light(
-        primary: Colors.blue, secondary: accent, background: grayBg),
+        primary: accent,
+        secondary: Color(0xFF14B8A6),
+        surface: surfaceLight,
+        onPrimary: Colors.white,
+        background: canvasLight),
     popupMenuTheme: PopupMenuThemeData(
-        color: Colors.white,
+        color: surfaceLight,
+        elevation: 10,
         shape: RoundedRectangleBorder(
           side: BorderSide(
               color: (isDesktop || isWebDesktop)
-                  ? Color(0xFFECECEC)
+                  ? borderLight
                   : Colors.transparent),
-          borderRadius: BorderRadius.all(Radius.circular(8.0)),
+          borderRadius: BorderRadius.all(Radius.circular(12.0)),
         )),
   ).copyWith(
     extensions: <ThemeExtension<dynamic>>[
@@ -471,45 +545,81 @@ class MyTheme {
   static ThemeData darkTheme = ThemeData(
     useMaterial3: false,
     brightness: Brightness.dark,
-    hoverColor: Color.fromARGB(255, 45, 46, 53),
-    scaffoldBackgroundColor: Color(0xFF18191E),
-    dialogBackgroundColor: Color(0xFF18191E),
+    hoverColor: Color(0xFF262A33),
+    scaffoldBackgroundColor: canvasDark,
+    dialogBackgroundColor: surfaceDark,
+    focusColor: accent.withOpacity(0.16),
     appBarTheme: AppBarTheme(
       shadowColor: Colors.transparent,
     ),
     dialogTheme: DialogTheme(
-      elevation: 15,
+      elevation: 18,
+      backgroundColor: surfaceDark,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18.0),
+        borderRadius: BorderRadius.circular(16.0),
         side: BorderSide(
           width: 1,
-          color: Color(0xFF24252B),
+          color: borderDark,
         ),
       ),
     ),
     scrollbarTheme: scrollbarThemeDark,
     inputDecorationTheme: (isDesktop || isWebDesktop)
         ? InputDecorationTheme(
-            fillColor: Color(0xFF24252B),
+            fillColor: Color(0xFF22262F),
+            hintStyle: TextStyle(color: textMutedDark),
+            contentPadding:
+                EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             filled: true,
             isDense: true,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: borderDark),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: borderDark),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: accent, width: 1.5),
             ),
           )
         : null,
     textTheme: const TextTheme(
-      titleLarge: TextStyle(fontSize: 19),
-      titleSmall: TextStyle(fontSize: 14),
-      bodySmall: TextStyle(fontSize: 12, height: 1.25),
-      bodyMedium: TextStyle(fontSize: 14, height: 1.25),
+      titleLarge: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2),
+      titleMedium:
+          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      titleSmall: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      bodySmall:
+          TextStyle(fontSize: 12, color: textMutedDark, height: 1.4),
+      bodyMedium: TextStyle(fontSize: 14, height: 1.45),
       labelLarge: TextStyle(
-        fontSize: 16.0,
-        fontWeight: FontWeight.bold,
-        color: accent80,
+        fontSize: 15.0,
+        fontWeight: FontWeight.w600,
+        color: accent,
       ),
     ),
-    cardColor: Color(0xFF24252B),
+    cardColor: surfaceDark,
+    cardTheme: CardTheme(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: surfaceDark,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: borderDark),
+      ),
+    ),
+    hintColor: textMutedDark,
+    dividerTheme: DividerThemeData(
+      color: borderDark,
+      thickness: 1,
+      space: 1,
+    ),
     visualDensity: VisualDensity.adaptivePlatformDensity,
     tabBarTheme: const TabBarTheme(
       labelColor: Colors.white70,
@@ -534,21 +644,26 @@ class MyTheme {
       style: ElevatedButton.styleFrom(
         backgroundColor: MyTheme.accent,
         foregroundColor: Colors.white,
+        elevation: 0,
+        padding: EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+        textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         disabledForegroundColor: Colors.white70,
         disabledBackgroundColor: Colors.white10,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0),
+          borderRadius: BorderRadius.circular(10.0),
         ),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         backgroundColor: Color(0xFF24252B),
-        side: BorderSide(color: Colors.white12, width: 0.5),
+        side: BorderSide(color: borderDark, width: 1),
         disabledForegroundColor: Colors.white70,
         foregroundColor: Colors.white70,
+        padding: EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+        textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0),
+          borderRadius: BorderRadius.circular(10.0),
         ),
       ),
     ),
@@ -558,16 +673,19 @@ class MyTheme {
     listTileTheme: listTileTheme,
     menuBarTheme: MenuBarThemeData(
         style: MenuStyle(
-            backgroundColor: MaterialStatePropertyAll(Color(0xFF121212)))),
+            backgroundColor: MaterialStatePropertyAll(surfaceDark))),
     colorScheme: ColorScheme.dark(
-      primary: Colors.blue,
+      primary: accent,
       secondary: accent,
-      background: Color(0xFF24252B),
+      surface: surfaceDark,
+      background: canvasDark,
     ),
     popupMenuTheme: PopupMenuThemeData(
+        color: surfaceDark,
+        elevation: 10,
         shape: RoundedRectangleBorder(
-      side: BorderSide(color: Colors.white24),
-      borderRadius: BorderRadius.all(Radius.circular(8.0)),
+      side: BorderSide(color: borderDark),
+      borderRadius: BorderRadius.all(Radius.circular(12.0)),
     )),
   ).copyWith(
     extensions: <ThemeExtension<dynamic>>[

@@ -28,9 +28,7 @@ import 'package:url_launcher/url_launcher_string.dart';
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
 
-const double _kTabWidth = 200;
-const double _kTabHeight = 42;
-const double _kCardFixedWidth = 540;
+const double _kCardFixedWidth = 760;
 const double _kCardLeftMargin = 15;
 const double _kContentHMargin = 15;
 const double _kContentHSubMargin = _kContentHMargin + 33;
@@ -277,120 +275,153 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: _buildBlock(
         children: <Widget>[
-          SizedBox(
-            width: _kTabWidth,
+          Expanded(
             child: Column(
               children: [
                 _header(context),
-                Flexible(child: _listView(tabs: _settingTabs())),
+                const Divider(height: 1),
+                Expanded(
+                  child: Container(
+                    color: Theme.of(context).scaffoldBackgroundColor,
+                    child: PageView(
+                      controller: controller,
+                      physics: NeverScrollableScrollPhysics(),
+                      children: _children(),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: Container(
-              color: Theme.of(context).scaffoldBackgroundColor,
-              child: PageView(
-                controller: controller,
-                physics: NeverScrollableScrollPhysics(),
-                children: _children(),
-              ),
-            ),
-          )
         ],
       ),
     );
   }
 
   Widget _header(BuildContext context) {
-    final settingsText = Text(
-      translate('Settings'),
-      textAlign: TextAlign.left,
-      style: const TextStyle(
-        color: _accentColor,
-        fontSize: _kTitleFontSize,
-        fontWeight: FontWeight.w400,
+    final theme = Theme.of(context);
+    final tabs = _settingTabs();
+    return Container(
+      color: theme.scaffoldBackgroundColor,
+      padding: const EdgeInsets.only(top: 8, bottom: 8),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 44,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Text(
+                  translate('Settings'),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (isWeb)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: IconButton(
+                      onPressed: () {
+                        if (Navigator.canPop(context)) {
+                          Navigator.pop(context);
+                        }
+                      },
+                      icon: const Icon(Icons.arrow_back),
+                    ).marginOnly(left: 8),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 68,
+            child: Obx(
+              () => Center(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: tabs.map((tab) {
+                      final selected = tab.key == selectedTab.value;
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () {
+                          final index =
+                              DesktopSettingPage.tabKeys.indexOf(tab.key);
+                          if (index == -1) {
+                            return;
+                          }
+                          selectedTab.value = tab.key;
+                          controller.animateToPage(
+                            index,
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeOut,
+                          );
+                        },
+                        child: Container(
+                          width: 88,
+                          height: 64,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? theme.colorScheme.surface
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: selected
+                                ? [
+                                    BoxShadow(
+                                      color: Colors.black
+                                          .withOpacity(theme.brightness ==
+                                                  Brightness.dark
+                                              ? 0.22
+                                              : 0.06),
+                                      blurRadius: 16,
+                                      offset: const Offset(0, 5),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                selected ? tab.selected : tab.unselected,
+                                size: 27,
+                                color: selected
+                                    ? _accentColor
+                                    : theme.colorScheme.onSurface
+                                        .withOpacity(0.55),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                translate(tab.label),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: selected
+                                      ? _accentColor
+                                      : theme.colorScheme.onSurface
+                                          .withOpacity(0.62),
+                                  fontWeight: selected
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
-    return Row(
-      children: [
-        if (isWeb)
-          IconButton(
-            onPressed: () {
-              if (Navigator.canPop(context)) {
-                Navigator.pop(context);
-              }
-            },
-            icon: Icon(Icons.arrow_back),
-          ).marginOnly(left: 5),
-        if (isWeb)
-          SizedBox(
-            height: 62,
-            child: Align(
-              alignment: Alignment.center,
-              child: settingsText,
-            ),
-          ).marginOnly(left: 20),
-        if (!isWeb)
-          SizedBox(
-            height: 62,
-            child: settingsText,
-          ).marginOnly(left: 20, top: 10),
-        const Spacer(),
-      ],
-    );
-  }
-
-  Widget _listView({required List<_TabInfo> tabs}) {
-    final scrollController = ScrollController();
-    return ListView(
-      controller: scrollController,
-      children: tabs.map((tab) => _listItem(tab: tab)).toList(),
-    );
-  }
-
-  Widget _listItem({required _TabInfo tab}) {
-    return Obx(() {
-      bool selected = tab.key == selectedTab.value;
-      return SizedBox(
-        width: _kTabWidth,
-        height: _kTabHeight,
-        child: InkWell(
-          onTap: () {
-            if (selectedTab.value != tab.key) {
-              int index = DesktopSettingPage.tabKeys.indexOf(tab.key);
-              if (index == -1) {
-                return;
-              }
-              controller.jumpToPage(index);
-            }
-            selectedTab.value = tab.key;
-          },
-          child: Row(children: [
-            Container(
-              width: 4,
-              height: _kTabHeight * 0.7,
-              color: selected ? _accentColor : null,
-            ),
-            Icon(
-              selected ? tab.selected : tab.unselected,
-              color: selected ? _accentColor : null,
-              size: 20,
-            ).marginOnly(left: 13, right: 10),
-            Text(
-              translate(tab.label),
-              style: TextStyle(
-                  color: selected ? _accentColor : null,
-                  fontWeight: FontWeight.w400,
-                  fontSize: _kContentFontSize),
-            ),
-          ]),
-        ),
-      );
-    });
   }
 }
 
@@ -2675,35 +2706,34 @@ Widget _Card(
     {required String title,
     required List<Widget> children,
     List<Widget>? title_suffix}) {
-  return Row(
-    children: [
-      Flexible(
-        child: SizedBox(
-          width: _kCardFixedWidth,
-          child: Card(
-            child: Column(
+  return Center(
+    child: Container(
+      width: _kCardFixedWidth,
+      margin: const EdgeInsets.only(top: 15, bottom: 10),
+      child: Card(
+        child: Column(
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                        child: Text(
-                      translate(title),
-                      textAlign: TextAlign.start,
-                      style: const TextStyle(
-                        fontSize: _kTitleFontSize,
-                      ),
-                    )),
-                    ...?title_suffix
-                  ],
-                ).marginOnly(left: _kContentHMargin, top: 10, bottom: 10),
-                ...children
-                    .map((e) => e.marginOnly(top: 4, right: _kContentHMargin)),
+                Expanded(
+                    child: Text(
+                  translate(title),
+                  textAlign: TextAlign.start,
+                  style: const TextStyle(
+                    fontSize: _kTitleFontSize,
+                    fontWeight: FontWeight.w600,
+                  ),
+                )),
+                ...?title_suffix
               ],
-            ).marginOnly(bottom: 10),
-          ).marginOnly(left: _kCardLeftMargin, top: 15),
-        ),
+            ).paddingOnly(left: 20, right: 16, top: 16, bottom: 12),
+            ...children.map(
+              (e) => e.marginOnly(top: 2, right: 16, bottom: 4),
+            ),
+          ],
+        ).paddingOnly(bottom: 10),
       ),
-    ],
+    ),
   );
 }
 

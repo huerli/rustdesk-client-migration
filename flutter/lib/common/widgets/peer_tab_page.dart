@@ -145,18 +145,22 @@ class _PeerTabPageState extends State<PeerTabPage>
         physics: NeverScrollableScrollPhysics(),
         children: model.visibleEnabledOrderedIndexs.map((t) {
           final selected = model.currentTab == t;
+          final primary = Theme.of(context).colorScheme.primary;
           final color = selected
-              ? MyTheme.tabbar(context).selectedTextColor
-              : MyTheme.tabbar(context).unSelectedTextColor
-            ?..withOpacity(0.5);
+              ? primary
+              : Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.color
+                  ?.withOpacity(0.5);
           final hover = false.obs;
-          final deco = BoxDecoration(
-              color: Theme.of(context).colorScheme.background,
-              borderRadius: BorderRadius.circular(6));
-          final decoBorder = BoxDecoration(
-              border: Border(
-            bottom: BorderSide(width: 2, color: color!),
-          ));
+          final hoverDeco = BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(8));
+          final selectedDeco = BoxDecoration(
+              color: primary.withOpacity(0.1),
+              border: Border.all(color: primary.withOpacity(0.22)),
+              borderRadius: BorderRadius.circular(8));
           counter += 1;
           return ReorderableDragStartListener(
               key: ValueKey(t),
@@ -167,12 +171,14 @@ class _PeerTabPageState extends State<PeerTabPage>
                     onTriggered: isMobile ? mobileShowTabVisibilityMenu : null,
                     child: InkWell(
                       child: Container(
-                        decoration: (hover.value
-                            ? (selected ? decoBorder : deco)
-                            : (selected ? decoBorder : null)),
-                        child: Icon(model.tabIcon(t), color: color)
-                            .paddingSymmetric(horizontal: 4),
-                      ).paddingSymmetric(horizontal: 4),
+                        height: 30,
+                        margin: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 9),
+                        decoration: selected
+                            ? selectedDeco
+                            : (hover.value ? hoverDeco : null),
+                        child: Icon(model.tabIcon(t), color: color, size: 18),
+                      ),
                       onTap: isOptionFixed(kOptionPeerTabIndex)
                           ? null
                           : () async {
