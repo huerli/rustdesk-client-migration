@@ -1,0 +1,21 @@
+name: Build desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/client-migration
+    paths:
+      - .github/workflows/build-installers.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/flutter-build.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: "v1.5.1-ui.1"
+      publish-update-metadata: false
