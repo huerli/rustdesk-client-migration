@@ -68,6 +68,10 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Skip update metadata validation
+        if: ${{ !inputs.publish-update-metadata }}
+        run: echo "Update metadata publication is disabled."
+
       - name: Checkout source code
         if: ${{ inputs.publish-update-metadata }}
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
