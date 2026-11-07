@@ -79,31 +79,26 @@ validate_patch_inputs() {
 is_complete_patch_state() {
   has_exact_count "$THEME_MATCHES" 'dialogTheme: DialogThemeData(' flutter/lib/common.dart &&
     has_exact_count "$THEME_MATCHES" 'tabBarTheme: const TabBarThemeData(' flutter/lib/common.dart &&
-    has_exact_count "$SINGLE_MATCH" 'backgroundColor: Colors.white,' flutter/lib/common.dart &&
-    has_exact_count "$SINGLE_MATCH" 'backgroundColor: Color(0xFF18191E),' flutter/lib/common.dart &&
+    has_exact_count "$THEME_MATCHES" 'cardTheme: CardThemeData(' flutter/lib/common.dart &&
     has_exact_count "$SINGLE_MATCH" 'extended_text: 15.0.2' flutter/pubspec.yaml &&
     has_exact_count "$SINGLE_MATCH" 'google_fonts: ^8.1.0' flutter/pubspec.yaml &&
     has_exact_count "$NO_MATCHES" 'dialogTheme: DialogTheme(' flutter/lib/common.dart &&
     has_exact_count "$NO_MATCHES" 'tabBarTheme: const TabBarTheme(' flutter/lib/common.dart &&
+    has_exact_count "$NO_MATCHES" 'cardTheme: CardTheme(' flutter/lib/common.dart &&
     has_exact_count "$NO_MATCHES" 'extended_text: 14.0.0' flutter/pubspec.yaml &&
     has_exact_count "$NO_MATCHES" 'google_fonts: ^6.2.1' flutter/pubspec.yaml &&
-    has_dialog_background_in_theme_range 'static ThemeData lightTheme = ThemeData(' \
-      'static ThemeData darkTheme = ThemeData(' 'backgroundColor: Colors.white,' \
-      flutter/lib/common.dart &&
-    has_dialog_background_in_theme_range 'static ThemeData darkTheme = ThemeData(' \
-      'scrollbarTheme: scrollbarThemeDark,' 'backgroundColor: Color(0xFF18191E),' \
-      flutter/lib/common.dart
+  true
 }
 
 is_unpatched_state() {
   has_exact_count "$THEME_MATCHES" 'dialogTheme: DialogTheme(' flutter/lib/common.dart &&
     has_exact_count "$THEME_MATCHES" 'tabBarTheme: const TabBarTheme(' flutter/lib/common.dart &&
+    has_exact_count "$THEME_MATCHES" 'cardTheme: CardTheme(' flutter/lib/common.dart &&
     has_exact_count "$SINGLE_MATCH" 'extended_text: 14.0.0' flutter/pubspec.yaml &&
     has_exact_count "$SINGLE_MATCH" 'google_fonts: ^6.2.1' flutter/pubspec.yaml &&
     has_exact_count "$NO_MATCHES" 'dialogTheme: DialogThemeData(' flutter/lib/common.dart &&
     has_exact_count "$NO_MATCHES" 'tabBarTheme: const TabBarThemeData(' flutter/lib/common.dart &&
-    has_exact_count "$NO_MATCHES" 'backgroundColor: Colors.white,' flutter/lib/common.dart &&
-    has_exact_count "$NO_MATCHES" 'backgroundColor: Color(0xFF18191E),' flutter/lib/common.dart &&
+    has_exact_count "$NO_MATCHES" 'cardTheme: CardThemeData(' flutter/lib/common.dart &&
     has_exact_count "$NO_MATCHES" 'extended_text: 15.0.2' flutter/pubspec.yaml &&
     has_exact_count "$NO_MATCHES" 'google_fonts: ^8.1.0' flutter/pubspec.yaml
 }
@@ -126,10 +121,7 @@ fi
 # ThemeData API renames (Flutter 3.27+):
 sed -i 's/dialogTheme: DialogTheme(/dialogTheme: DialogThemeData(/g' flutter/lib/common.dart
 sed -i 's/tabBarTheme: const TabBarTheme(/tabBarTheme: const TabBarThemeData(/g' flutter/lib/common.dart
-sed -i '/static ThemeData lightTheme = ThemeData(/,/static ThemeData darkTheme = ThemeData(/s/dialogTheme: DialogThemeData(/dialogTheme: DialogThemeData(\
-      backgroundColor: Colors.white,/' flutter/lib/common.dart
-sed -i '/static ThemeData darkTheme = ThemeData(/,/scrollbarTheme: scrollbarThemeDark,/s/dialogTheme: DialogThemeData(/dialogTheme: DialogThemeData(\
-      backgroundColor: Color(0xFF18191E),/' flutter/lib/common.dart
+sed -i 's/cardTheme: CardTheme(/cardTheme: CardThemeData(/g' flutter/lib/common.dart
 # Dependency bumps required by the newer Dart/Flutter:
 sed -i 's/extended_text: 14.0.0/extended_text: 15.0.2/' flutter/pubspec.yaml
 sed -i 's/google_fonts: \^6.2.1/google_fonts: ^8.1.0/' flutter/pubspec.yaml
