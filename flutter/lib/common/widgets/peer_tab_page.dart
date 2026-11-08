@@ -174,9 +174,9 @@ class _PeerTabPageState extends State<PeerTabPage>
                         height: 30,
                         margin: const EdgeInsets.only(right: 6),
                         padding: const EdgeInsets.symmetric(horizontal: 9),
-                        decoration: selected
-                            ? selectedDeco
-                            : (hover.value ? hoverDeco : null),
+                        decoration: hover.value
+                            ? (selected ? selectedDeco : hoverDeco)
+                            : (selected ? selectedDeco : null),
                         child: Icon(model.tabIcon(t), color: color, size: 18),
                       ),
                       onTap: isOptionFixed(kOptionPeerTabIndex)

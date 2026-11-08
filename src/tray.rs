@@ -23,6 +23,18 @@ pub fn start_tray() {
     allow_err!(make_tray());
 }
 
+#[cfg(all(target_os = "linux", feature = "flutter"))]
+pub(crate) fn resume_host_on_launch() {
+    const STOP_SERVICE: &str = "stop-service";
+    if !hbb_common::config::is_outgoing_only()
+        && !crate::ui_interface::is_option_fixed(STOP_SERVICE)
+        && crate::ipc::get_options().get(STOP_SERVICE).map(String::as_str) == Some("Y")
+    {
+        crate::ipc::set_option(STOP_SERVICE, "");
+        crate::ui_interface::refresh_options();
+    }
+}
+
 fn make_tray() -> hbb_common::ResultType<()> {
     // https://github.com/tauri-apps/tray-icon/blob/dev/examples/tao.rs
     use hbb_common::anyhow::Context;
@@ -64,17 +76,25 @@ fn make_tray() -> hbb_common::ResultType<()> {
     let mut event_loop = EventLoopBuilder::new().build();
 
     let tray_menu = Menu::new();
-    let hide_stop_service = crate::ui_interface::get_builtin_option(
-        keys::OPTION_HIDE_STOP_SERVICE,
-    ) == "Y";
-    // The tray icon is only shown when the service is running, so we don't need to check
-    // the `stop-service` option here.
-    let quit_i = if !hide_stop_service {
-        Some(MenuItem::new(translate("Stop service".to_owned()), true, None))
-    } else {
-        None
+    #[cfg(all(target_os = "linux", feature = "flutter"))]
+    let (quit_i, open_i) = (
+        Some(MenuItem::new(translate("Exit".to_owned()), true, None)),
+        MenuItem::new(translate("Open panel".to_owned()), true, None),
+    );
+    #[cfg(not(all(target_os = "linux", feature = "flutter")))]
+    let (quit_i, open_i) = {
+        let hide_stop_service = crate::ui_interface::get_builtin_option(
+            keys::OPTION_HIDE_STOP_SERVICE,
+        ) == "Y";
+        // The tray icon is only shown when the service is running, so we don't need to check
+        // the `stop-service` option here.
+        let quit_i = if !hide_stop_service {
+            Some(MenuItem::new(translate("Stop service".to_owned()), true, None))
+        } else {
+            None
+        };
+        (quit_i, MenuItem::new(translate("Open".to_owned()), true, None))
     };
-    let open_i = MenuItem::new(translate("Open".to_owned()), true, None);
     if let Some(quit_i) = &quit_i {
         tray_menu.append_items(&[&open_i, quit_i]).ok();
     } else {
@@ -190,32 +210,45 @@ fn make_tray() -> hbb_common::ResultType<()> {
         if let Ok(event) = menu_channel.try_recv() {
             if let Some(quit_i) = &quit_i {
                 if event.id == quit_i.id() {
-                    /* failed in windows, seems no permission to check system process
-                    if !crate::check_process("--server", false) {
+                    #[cfg(all(target_os = "linux", feature = "flutter"))]
+                    {
+                        if let Err(err) = crate::dbus::invoke_new_connection(
+                            crate::ipc::IPC_ACTION_CLOSE.to_owned(),
+                        ) {
+                            log::debug!("Could not close the panel from the tray: {err}");
+                        }
                         *control_flow = ControlFlow::Exit;
                         return;
                     }
-                    */
-                    // Remove the icon first: on success `uninstall_service()` ends
-                    // this process with `std::process::exit`, which skips the
-                    // destructor that would remove it, leaving a ghost icon behind.
-                    #[cfg(windows)]
-                    let _ = _tray_icon
-                        .lock()
-                        .unwrap()
-                        .as_mut()
-                        .map(|t| t.set_visible(false));
-                    if !crate::platform::uninstall_service(false, false) {
-                        *control_flow = ControlFlow::Exit;
+                    #[cfg(not(all(target_os = "linux", feature = "flutter")))]
+                    {
+                        /* failed in windows, seems no permission to check system process
+                        if !crate::check_process("--server", false) {
+                            *control_flow = ControlFlow::Exit;
+                            return;
+                        }
+                        */
+                        // Remove the icon first: on success `uninstall_service()` ends
+                        // this process with `std::process::exit`, which skips the
+                        // destructor that would remove it, leaving a ghost icon behind.
+                        #[cfg(windows)]
+                        let _ = _tray_icon
+                            .lock()
+                            .unwrap()
+                            .as_mut()
+                            .map(|t| t.set_visible(false));
+                        if !crate::platform::uninstall_service(false, false) {
+                            *control_flow = ControlFlow::Exit;
+                        }
+                        // Still alive, so stopping the service failed or was cancelled
+                        // in the UAC prompt. Show the icon again.
+                        #[cfg(windows)]
+                        let _ = _tray_icon
+                            .lock()
+                            .unwrap()
+                            .as_mut()
+                            .map(|t| t.set_visible(true));
                     }
-                    // Still alive, so stopping the service failed or was cancelled
-                    // in the UAC prompt. Show the icon again.
-                    #[cfg(windows)]
-                    let _ = _tray_icon
-                        .lock()
-                        .unwrap()
-                        .as_mut()
-                        .map(|t| t.set_visible(true));
                 } else if event.id == open_i.id() {
                     open_func();
                 }

@@ -826,5 +826,15 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("install-directory-not-empty-tip", "所选文件夹不为空。安装可能删除现有数据。建议选择其他文件夹。"),
         ("Request approval", "请求批准"),
         ("Forever", "永久"),
+        ("My devices", "我的设备"),
+        ("All devices", "全部设备"),
+        ("Remote assistance", "远程协助"),
+        ("Start assistance", "开始协助"),
+        ("Favorite devices", "收藏设备"),
+        ("Enter desktop", "进入桌面"),
+        ("Quick launch", "快速启动"),
+        ("Online", "在线"),
+        ("Offline", "离线"),
+        ("Open panel", "打开面板"),
     ].iter().cloned().collect();
 }

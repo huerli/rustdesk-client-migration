@@ -697,77 +697,9 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn swap_modifier_key(&self, msg: &mut KeyEvent) {
-        let allow_swap_key = self.get_toggle_option("allow_swap_key".to_string());
-        if allow_swap_key {
-            if let Some(key_event::Union::ControlKey(ck)) = msg.union {
-                let ck = ck.enum_value_or_default();
-                let ck = match ck {
-                    ControlKey::Control => ControlKey::Meta,
-                    ControlKey::Meta => ControlKey::Control,
-                    ControlKey::RControl => ControlKey::Meta,
-                    ControlKey::RWin => ControlKey::Control,
-                    _ => ck,
-                };
-                msg.set_control_key(ck);
-            }
-            msg.modifiers = msg
-                .modifiers
-                .iter()
-                .map(|ck| {
-                    let ck = ck.enum_value_or_default();
-                    let ck = match ck {
-                        ControlKey::Control => ControlKey::Meta,
-                        ControlKey::Meta => ControlKey::Control,
-                        ControlKey::RControl => ControlKey::Meta,
-                        ControlKey::RWin => ControlKey::Control,
-                        _ => ck,
-                    };
-                    hbb_common::protobuf::EnumOrUnknown::new(ck)
-                })
-                .collect();
-
-            let code = msg.chr();
-            if code != 0 {
-                let mut peer = self.peer_platform().to_lowercase();
-                peer.retain(|c| !c.is_whitespace());
-
-                let key = match peer.as_str() {
-                    "windows" => {
-                        let key = rdev::win_key_from_scancode(code);
-                        let key = match key {
-                            rdev::Key::ControlLeft => rdev::Key::MetaLeft,
-                            rdev::Key::MetaLeft => rdev::Key::ControlLeft,
-                            rdev::Key::ControlRight => rdev::Key::MetaLeft,
-                            rdev::Key::MetaRight => rdev::Key::ControlLeft,
-                            _ => key,
-                        };
-                        rdev::win_scancode_from_key(key).unwrap_or_default()
-                    }
-                    "macos" => {
-                        let key = rdev::macos_key_from_code(code as _);
-                        let key = match key {
-                            rdev::Key::ControlLeft => rdev::Key::MetaLeft,
-                            rdev::Key::MetaLeft => rdev::Key::ControlLeft,
-                            rdev::Key::ControlRight => rdev::Key::MetaLeft,
-                            rdev::Key::MetaRight => rdev::Key::ControlLeft,
-                            _ => key,
-                        };
-                        rdev::macos_keycode_from_key(key).unwrap_or_default() as _
-                    }
-                    _ => {
-                        let key = rdev::linux_key_from_code(code);
-                        let key = match key {
-                            rdev::Key::ControlLeft => rdev::Key::MetaLeft,
-                            rdev::Key::MetaLeft => rdev::Key::ControlLeft,
-                            rdev::Key::ControlRight => rdev::Key::MetaLeft,
-                            rdev::Key::MetaRight => rdev::Key::ControlLeft,
-                            _ => key,
-                        };
-                        rdev::linux_keycode_from_key(key).unwrap_or_default()
-                    }
-                };
-                msg.set_chr(key);
-            }
+        let config = self.lc.read().unwrap();
+        if config.get_toggle_option("allow_swap_key") {
+            keyboard::modifier_swap::swap_key_event(msg, &config.info.platform);
         }
     }
 
@@ -1938,24 +1870,9 @@ impl<T: InvokeUiSession> Interface for Session<T> {
     }
 
     fn swap_modifier_mouse(&self, msg: &mut base::protos::message::MouseEvent) {
-        let allow_swap_key = self.get_toggle_option("allow_swap_key".to_string());
-        if allow_swap_key {
-            msg.modifiers = msg
-                .modifiers
-                .iter()
-                .map(|ck| {
-                    let ck = ck.enum_value_or_default();
-                    let ck = match ck {
-                        ControlKey::Control => ControlKey::Meta,
-                        ControlKey::Meta => ControlKey::Control,
-                        ControlKey::RControl => ControlKey::Meta,
-                        ControlKey::RWin => ControlKey::Control,
-                        _ => ck,
-                    };
-                    hbb_common::protobuf::EnumOrUnknown::new(ck)
-                })
-                .collect();
-        };
+        if self.lc.read().unwrap().get_toggle_option("allow_swap_key") {
+            keyboard::modifier_swap::swap_modifiers(&mut msg.modifiers);
+        }
     }
 }
 
@@ -1964,9 +1881,15 @@ impl<T: InvokeUiSession> Session<T> {
         self.send_key_event(&crate::keyboard::client::event_lock_screen());
     }
     pub fn ctrl_alt_del(&self) {
-        self.send_key_event(&crate::keyboard::client::event_ctrl_alt_del(
-            &self.peer_platform(),
-        ));
+        let peer = self.peer_platform();
+        let event = keyboard::client::event_ctrl_alt_del(&peer);
+        if keyboard::modifier_swap::uses_desktop_default(&peer) {
+            let mut msg = Message::new();
+            msg.set_key_event(event);
+            self.send(Data::Message(msg));
+        } else {
+            self.send_key_event(&event);
+        }
     }
 }
 

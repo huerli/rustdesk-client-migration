@@ -216,7 +216,13 @@ pub fn core_main() -> Option<CoreMainAction> {
             crate::platform::try_remove_temp_update_files();
             hbb_common::config::PeerConfig::preload_peers();
         }
-        std::thread::spawn(move || crate::start_server(false, no_server));
+        std::thread::spawn(move || {
+            #[cfg(all(target_os = "linux", feature = "flutter"))]
+            if !no_server {
+                crate::tray::resume_host_on_launch();
+            }
+            crate::start_server(false, no_server);
+        });
     } else {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         // Root CLI management commands must talk to the user `--server` main IPC.

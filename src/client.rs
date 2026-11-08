@@ -3285,7 +3285,7 @@ impl LoginConfigHandler {
         } else if name == "show-quality-monitor" {
             config.show_quality_monitor.v = !config.show_quality_monitor.v;
         } else if name == "allow_swap_key" {
-            config.allow_swap_key.v = !config.allow_swap_key.v;
+            crate::keyboard::modifier_swap::toggle(&mut config);
         } else if name == "view-only" {
             config.view_only.v = !config.view_only.v;
             let f = |b: bool| {
@@ -3496,7 +3496,7 @@ impl LoginConfigHandler {
         } else if name == "show-quality-monitor" {
             self.config.show_quality_monitor.v
         } else if name == "allow_swap_key" {
-            self.config.allow_swap_key.v
+            crate::keyboard::modifier_swap::enabled(&self.config)
         } else if name == "view-only" {
             self.config.view_only.v
         } else if name == "show-my-cursor" {

@@ -10,6 +10,7 @@ import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
+import 'package:flutter_hbb/desktop/pages/desktop_assistance_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
@@ -27,6 +28,18 @@ import 'package:window_manager/window_manager.dart';
 import 'package:window_size/window_size.dart' as window_size;
 import '../widgets/button.dart';
 
+List<Peer> recentPeersWithLanStatus(List<Peer> recentPeers, List<Peer> lanPeers) {
+  return recentPeers.map((peer) {
+    if (peer.online ||
+        !lanPeers.any((lan) =>
+            lan.online &&
+            (lan.id == peer.id || lan.ipAddresses.split(',').contains(peer.id)))) {
+      return peer;
+    }
+    return Peer.copy(peer)..online = true;
+  }).toList();
+}
+
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({Key? key}) : super(key: key);
 
@@ -35,6 +48,8 @@ class DesktopHomePage extends StatefulWidget {
 }
 
 const borderColor = Color(0xFF2F65BA);
+
+enum _WorkspacePage { device, allDevices, assistance }
 
 class _DesktopHomePageState extends State<DesktopHomePage>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
@@ -56,8 +71,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Peer? _selectedPeer;
   bool _myDevicesExpanded = true;
   bool _remoteAssistExpanded = true;
+  _WorkspacePage _workspacePage = _WorkspacePage.device;
 
   final GlobalKey _childKey = GlobalKey();
+  late final _peerUpdates =
+      Listenable.merge([gFFI.recentPeersModel, gFFI.lanPeersModel]);
 
   @override
   Widget build(BuildContext context) {
@@ -70,7 +88,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             buildLeftPane(context),
-            if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
+            if (!isIncomingOnly)
+              Expanded(
+                child: ListenableBuilder(
+                  listenable: _peerUpdates,
+                  builder: (context, _) => buildRightPane(context),
+                ),
+              ),
           ],
         ),
       ),
@@ -93,9 +117,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Container(
-        width: isIncomingOnly ? 300.0 : 304.0,
+        width: (MediaQuery.of(context).size.width * 0.26).clamp(280.0, 480.0),
         decoration: BoxDecoration(
-          color: theme.colorScheme.background,
+          color: isDark ? theme.colorScheme.background : const Color(0xFFF8F8F8),
           border: Border(
             right: BorderSide(
               color: isDark ? MyTheme.borderDark : MyTheme.borderLight,
@@ -105,7 +129,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         child: Column(
           children: [
             if (!isOutgoingOnly) buildPresetPasswordWarning(),
-            _buildSidebarBrand(context),
+            const SizedBox(height: 38),
             Expanded(
               child: SingleChildScrollView(
                 controller: _leftPaneScrollController,
@@ -121,7 +145,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                     _buildSidebarSection(
                       context,
                       icon: Icons.devices_outlined,
-                      title: translate('Recent sessions'),
+                      title: translate('My devices'),
                       expanded: _myDevicesExpanded,
                       onTap: () => setState(() {
                         _myDevicesExpanded = !_myDevicesExpanded;
@@ -131,14 +155,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                     _buildSidebarAction(
                       context,
                       icon: Icons.grid_view_rounded,
-                      label: translate('Recent sessions'),
+                      label: translate('All devices'),
                       iconColor: MyTheme.accent,
                       onTap: () => _switchPeerTab(PeerTabIndex.recent),
                     ),
                     _buildSidebarSection(
                       context,
                       icon: Icons.support_agent_rounded,
-                      title: translate('Connect'),
+                      title: translate('Remote assistance'),
                       expanded: _remoteAssistExpanded,
                       onTap: () => setState(() {
                         _remoteAssistExpanded = !_remoteAssistExpanded;
@@ -148,23 +172,18 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                       _buildSidebarAction(
                         context,
                         icon: Icons.contact_support_outlined,
-                        label: translate('Connect'),
+                        label: translate('Start assistance'),
                         iconColor: Colors.blue,
-                        onTap: () => showQuickConnectDialog(context),
+                        selected: _workspacePage == _WorkspacePage.assistance,
+                        onTap: () => setState(
+                            () => _workspacePage = _WorkspacePage.assistance),
                       ),
                       _buildSidebarAction(
                         context,
                         icon: Icons.star_rounded,
-                        label: translate('Favorites'),
+                        label: translate('Favorite devices'),
                         iconColor: Colors.blue,
                         onTap: () => _switchPeerTab(PeerTabIndex.fav),
-                      ),
-                      _buildSidebarAction(
-                        context,
-                        icon: Icons.menu_book_rounded,
-                        label: translate('Address book'),
-                        iconColor: Colors.blue,
-                        onTap: () => _switchPeerTab(PeerTabIndex.ab),
                       ),
                     ],
                     FutureBuilder<Widget>(
@@ -182,19 +201,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                         return const Offstage();
                       },
                     ),
-                    if (!isOutgoingOnly) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-                        child: Text(
-                          translate('Your Desktop'),
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            color: theme.colorScheme.onBackground
-                                .withOpacity(0.72),
-                          ),
-                        ),
-                      ),
-                      buildIdentityCard(context),
-                    ],
                     if (isIncomingOnly) ...[
                       const Divider(),
                       OnlineStatusWidget(
@@ -279,31 +285,48 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
-  buildRightPane(BuildContext context) {
-    return Container(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: ConnectionPage(selectedPeer: _selectedPeer),
-    );
+  List<Peer> get _recentPeers => recentPeersWithLanStatus(
+      gFFI.recentPeersModel.peers,
+      gFFI.peerTabModel.isEnabled[PeerTabIndex.lan.index]
+          ? gFFI.lanPeersModel.peers
+          : const []);
+
+  Peer? get _currentPeer {
+    final peers = _recentPeers;
+    for (final peer in peers) {
+      if (peer.id == _selectedPeer?.id) return peer;
+    }
+    for (final peer in peers) {
+      if (peer.online) return peer;
+    }
+    return peers.isEmpty ? null : peers.first;
   }
 
-  Widget _buildSidebarBrand(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 16, 10),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: loadIcon(30),
+  buildRightPane(BuildContext context) {
+    final showAssistance = _workspacePage == _WorkspacePage.assistance;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Visibility(
+          visible: !showAssistance,
+          maintainState: true,
+          child: Container(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: ConnectionPage(
+              selectedPeer: _currentPeer,
+              showAllDevices: _workspacePage == _WorkspacePage.allDevices,
+            ),
           ),
-          const SizedBox(width: 10),
-          Text(
-            'RustDesk',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontSize: 18,
-                ),
+        ),
+        if (showAssistance)
+          ColoredBox(
+            color: Color.alphaBlend(
+              MyTheme.accent.withOpacity(0.035),
+              Theme.of(context).scaffoldBackgroundColor,
+            ),
+            child: DesktopAssistancePage(serviceStopped: svcStopped),
           ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -331,7 +354,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               child: Text(
                 title,
                 style: theme.textTheme.titleSmall?.copyWith(
-                  fontSize: 15,
+                  fontSize: 17,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -349,9 +372,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Widget _buildRecentDeviceList(BuildContext context) {
     final theme = Theme.of(context);
-    return Consumer<Peers>(
-      builder: (context, peers, child) {
-        if (peers.peers.isEmpty) {
+    return ListenableBuilder(
+      listenable: _peerUpdates,
+      builder: (context, _) {
+        final peers = _recentPeers;
+        if (peers.isEmpty) {
           return Padding(
             padding: const EdgeInsets.fromLTRB(22, 6, 22, 8),
             child: Text(
@@ -360,24 +385,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             ),
           );
         }
-        if (_selectedPeer == null) {
-          var initialPeer = peers.peers.first;
-          for (final peer in peers.peers) {
-            if (peer.online) {
-              initialPeer = peer;
-              break;
-            }
-          }
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _selectedPeer == null) {
-              setState(() {
-                _selectedPeer = initialPeer;
-              });
-            }
-          });
-        }
         return Column(
-          children: peers.peers
+          children: peers
               .take(6)
               .map((peer) => _buildDeviceRow(context, peer))
               .toList(),
@@ -388,24 +397,26 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Widget _buildDeviceRow(BuildContext context, Peer peer) {
     final theme = Theme.of(context);
-    final selected = _selectedPeer?.id == peer.id;
-    final deviceName = peer.alias.isNotEmpty
-        ? peer.alias
-        : (peer.hostname.isNotEmpty ? peer.hostname : peer.id);
+    final selected = _workspacePage == _WorkspacePage.device &&
+        _currentPeer?.id == peer.id;
+    final deviceName = peer.hostname.isNotEmpty
+        ? peer.hostname
+        : (peer.alias.isNotEmpty ? peer.alias : peer.id);
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () => setState(() {
         _selectedPeer = peer;
+        _workspacePage = _WorkspacePage.device;
       }),
       child: Container(
         height: 46,
         margin: const EdgeInsets.fromLTRB(14, 1, 14, 4),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 18),
         decoration: BoxDecoration(
           color: selected
               ? (theme.brightness == Brightness.dark
                   ? theme.colorScheme.surface
-                  : const Color(0xFFECEEF1))
+                    : const Color(0xFFE1E1E1))
               : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
         ),
@@ -415,8 +426,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               width: 8,
               height: 8,
               decoration: BoxDecoration(
-                color:
-                    peer.online ? const Color(0xFF35B66A) : Colors.grey.shade400,
+                color: peer.online
+                    ? const Color(0xFF32D52B)
+                    : Colors.transparent,
                 shape: BoxShape.circle,
               ),
             ),
@@ -425,14 +437,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               width: 30,
               height: 30,
               decoration: BoxDecoration(
-                color: selected
-                    ? theme.colorScheme.surface
-                    : theme.colorScheme.surface.withOpacity(0.7),
-                borderRadius: BorderRadius.circular(8),
+                color: peer.online ? const Color(0xFF3385FF) : Colors.grey,
+                borderRadius: BorderRadius.circular(6),
               ),
-              child: const Icon(
-                Icons.grid_view_rounded,
-                color: Colors.blue,
+              child: Icon(
+                peer.platform == 'Windows'
+                    ? Icons.window_rounded
+                    : peer.platform == 'Mac OS'
+                        ? Icons.laptop_mac_rounded
+                        : Icons.computer_rounded,
+                color: Colors.white,
                 size: 20,
               ),
             ),
@@ -443,8 +457,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  fontSize: 15,
+                  fontSize: 18,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  color: peer.online
+                      ? theme.colorScheme.onBackground
+                      : theme.colorScheme.onBackground.withOpacity(0.65),
                 ),
               ),
             ),
@@ -460,6 +477,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     required String label,
     required Color iconColor,
     required VoidCallback onTap,
+    bool selected = false,
   }) {
     final theme = Theme.of(context);
     return InkWell(
@@ -467,8 +485,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       onTap: onTap,
       child: Container(
         height: 42,
-        margin: const EdgeInsets.fromLTRB(20, 1, 16, 3),
+        margin: const EdgeInsets.fromLTRB(44, 1, 16, 3),
         padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: selected
+            ? BoxDecoration(
+                color: theme.colorScheme.onSurface.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(6),
+              )
+            : null,
         child: Row(
           children: [
             Icon(icon, size: 20, color: iconColor),
@@ -479,6 +503,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodyMedium?.copyWith(
+                  fontSize: 17,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -519,11 +544,32 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                hostname,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall,
+              child: Tooltip(
+                message: translate('Your Desktop'),
+                child: InkWell(
+                  onTap: () => showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      contentPadding: EdgeInsets.zero,
+                      content: SizedBox(
+                        width: 304,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            buildTip(dialogContext),
+                            buildIdentityCard(dialogContext),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  child: Text(
+                    hostname,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
               ),
             ),
             InkWell(
@@ -556,7 +602,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     } else if (tab == PeerTabIndex.fav) {
       bind.mainLoadFavPeers();
     }
-    setState(() {});
+    setState(() => _workspacePage = _WorkspacePage.allDevices);
   }
 
   Widget buildIdentityCard(BuildContext context) {
@@ -1121,8 +1167,24 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   void initState() {
     super.initState();
     bind.mainLoadRecentPeers();
+    if (!bind.isIncomingOnly() &&
+        gFFI.peerTabModel.isEnabled[PeerTabIndex.lan.index]) {
+      bind.mainLoadLanPeers();
+    }
     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
       await gFFI.serverModel.fetchID();
+      final tick = _updateTimer?.tick ?? 0;
+      if (!bind.isIncomingOnly() && isInHomePage() &&
+          (tick == 1 || tick % 20 == 0)) {
+        if (gFFI.peerTabModel.isEnabled[PeerTabIndex.lan.index]) {
+          bind.mainDiscover();
+        }
+        if (_workspacePage != _WorkspacePage.allDevices) {
+          final ids = gFFI.recentPeersModel.peers
+              .take(6).map((peer) => peer.id).toList();
+          if (ids.isNotEmpty) await bind.queryOnlines(ids: ids);
+        }
+      }
       final error = await bind.mainGetError();
       if (systemError != error) {
         systemError = error;

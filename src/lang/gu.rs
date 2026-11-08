@@ -826,5 +826,15 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("install-directory-not-empty-tip", "પસંદ કરેલ ફોલ્ડર ખાલી નથી. ઇન્સ્ટોલેશન હાલનો ડેટા કાઢી નાખી શકે છે. બીજું ફોલ્ડર પસંદ કરવાનું વિચારો."),
         ("Request approval", "મંજૂરીની વિનંતી કરો"),
         ("Forever", "કાયમ માટે"),
+        ("My devices", ""),
+        ("All devices", ""),
+        ("Remote assistance", ""),
+        ("Start assistance", ""),
+        ("Favorite devices", ""),
+        ("Enter desktop", ""),
+        ("Quick launch", ""),
+        ("Online", ""),
+        ("Offline", ""),
+        ("Open panel", ""),
     ].iter().cloned().collect();
 }

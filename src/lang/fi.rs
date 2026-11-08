@@ -826,5 +826,15 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("install-directory-not-empty-tip", "Valittu kansio ei ole tyhjä. Asennus voi poistaa olemassa olevia tietoja. Harkitse toisen kansion valitsemista."),
         ("Request approval", "Pyydä hyväksyntää"),
         ("Forever", "Ikuisesti"),
+        ("My devices", ""),
+        ("All devices", ""),
+        ("Remote assistance", ""),
+        ("Start assistance", ""),
+        ("Favorite devices", ""),
+        ("Enter desktop", ""),
+        ("Quick launch", ""),
+        ("Online", ""),
+        ("Offline", ""),
+        ("Open panel", ""),
     ].iter().cloned().collect();
 }

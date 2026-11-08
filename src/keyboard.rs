@@ -81,6 +81,7 @@ lazy_static::lazy_static! {
 }
 
 pub mod shortcuts;
+pub(crate) mod modifier_swap;
 
 pub mod client {
     use super::*;

@@ -826,5 +826,15 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("install-directory-not-empty-tip", "La carpeta seleccionada no és buida. La instal·lació pot suprimir les dades existents. Considereu triar una altra carpeta."),
         ("Request approval", "Sol·licita aprovació"),
         ("Forever", "Per sempre"),
+        ("My devices", ""),
+        ("All devices", ""),
+        ("Remote assistance", ""),
+        ("Start assistance", ""),
+        ("Favorite devices", ""),
+        ("Enter desktop", ""),
+        ("Quick launch", ""),
+        ("Online", ""),
+        ("Offline", ""),
+        ("Open panel", ""),
     ].iter().cloned().collect();
 }

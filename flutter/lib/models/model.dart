@@ -752,8 +752,22 @@ class FfiModel with ChangeNotifier {
       case kUrlActionClose:
         debugPrint("closing all instances");
         Future.microtask(() async {
-          await rustDeskWinManager.closeAllSubWindows();
-          windowManager.close();
+          if (isLinux) {
+            try {
+              await Future.wait([
+                saveWindowPosition(WindowType.Main),
+                rustDeskWinManager.closeAllSubWindows(),
+              ]);
+            } catch (err) {
+              debugPrintStack(label: 'Failed to save or close RustDesk: $err');
+            } finally {
+              await windowManager.setPreventClose(false);
+              await windowManager.close();
+            }
+          } else {
+            await rustDeskWinManager.closeAllSubWindows();
+            windowManager.close();
+          }
         });
         break;
       default:

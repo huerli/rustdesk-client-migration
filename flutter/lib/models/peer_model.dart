@@ -18,6 +18,7 @@ class Peer {
   String rdpPort;
   String rdpUsername;
   bool online = false;
+  String ipAddresses = '';
   String loginName; //login username
   String device_group_name;
   String note;
@@ -163,6 +164,7 @@ class Peer {
         note: other.note,
         sameServer: other.sameServer);
     peer.online = other.online;
+    peer.ipAddresses = other.ipAddresses;
     return peer;
   }
 }
@@ -217,6 +219,7 @@ class Peers extends ChangeNotifier {
   }
 
   void _updateOnlineState(Map<String, dynamic> evt) {
+    if (loadEvent == 'load_lan_peers') return;
     int changedCount = 0;
     evt['onlines'].split(',').forEach((online) {
       for (var i = 0; i < peers.length; i++) {
@@ -259,9 +262,11 @@ class Peers extends ChangeNotifier {
       restPeerIds = (evt['ids'] as String).split(',');
     }
 
-    for (var peer in peers) {
-      final state = onlineStates[peer.id];
-      peer.online = state != null && state != false;
+    if (loadEvent != 'load_lan_peers') {
+      for (var peer in peers) {
+        final state = onlineStates[peer.id];
+        peer.online = state != null && state != false;
+      }
     }
     event = UpdateEvent.load;
     notifyListeners();
@@ -280,7 +285,12 @@ class Peers extends ChangeNotifier {
       if (peersStr == "") return [];
       List<dynamic> peers = json.decode(peersStr);
       return peers.map((peer) {
-        return Peer.fromJson(peer as Map<String, dynamic>);
+        final decoded = Peer.fromJson(peer as Map<String, dynamic>);
+        if (loadEvent == 'load_lan_peers') {
+          decoded.online = peer['online'] == 'true';
+          decoded.ipAddresses = peer['ip_addresses'] ?? '';
+        }
+        return decoded;
       }).toList();
     } catch (e) {
       debugPrint('peers(): $e');

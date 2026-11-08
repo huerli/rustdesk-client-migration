@@ -4047,13 +4047,14 @@ Widget buildPresetPasswordWarning() {
   return FutureBuilder<bool>(
     future: bind.isPresetPassword(),
     builder: (BuildContext context, AsyncSnapshot<bool> snapshot) {
-      if (snapshot.connectionState == ConnectionState.waiting) {
-        return CircularProgressIndicator(); // Show a loading spinner while waiting for the Future to complete
-      } else if (snapshot.hasError) {
+      if (snapshot.hasError) {
         return Text(
             'Error: ${snapshot.error}'); // Show an error message if the Future completed with an error
       } else if (snapshot.hasData && snapshot.data == true) {
         return _buildPresetPasswordWarning();
+      } else if (!snapshot.hasData &&
+          snapshot.connectionState == ConnectionState.waiting) {
+        return const CircularProgressIndicator();
       } else {
         return SizedBox
             .shrink(); // Show nothing if the Future completed with false or null
