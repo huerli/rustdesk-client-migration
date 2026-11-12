@@ -5336,13 +5336,17 @@ async fn hc_connection_(
 }
 
 pub mod peer_online {
+    use base::message_proto::{message, Message};
     use hbb_common::{
         anyhow::bail,
-        config::{Config, CONNECT_TIMEOUT, READ_TIMEOUT},
+        config::{Config, CONNECT_TIMEOUT, READ_TIMEOUT, RELAY_PORT},
+        futures::future::join_all,
         log,
+        protobuf::Message as _,
         rendezvous_proto::*,
         sleep,
-        socket_client::connect_tcp,
+        socket_client::{check_port, connect_tcp, connect_tcp_local},
+        timeout,
         ResultType, Stream,
     };
 
@@ -5355,7 +5359,12 @@ pub mod peer_online {
             f(onlines, offlines)
         } else {
             let query_timeout = std::time::Duration::from_millis(3_000);
-            match query_online_states_(&ids, query_timeout).await {
+            let states = if ids.iter().any(|id| hbb_common::is_ip_str(id)) {
+                query_online_states_with_direct(&ids, query_timeout).await
+            } else {
+                query_online_states_(&ids, query_timeout).await
+            };
+            match states {
                 Ok((onlines, offlines)) => {
                     f(onlines, offlines);
                 }
@@ -5379,6 +5388,58 @@ pub mod peer_online {
         }
         let online_server = format!("{}:{}", tmp[0], port - 1);
         connect_tcp(online_server, CONNECT_TIMEOUT).await
+    }
+
+    async fn query_online_states_with_direct(
+        ids: &Vec<String>,
+        timeout: std::time::Duration,
+    ) -> ResultType<(Vec<String>, Vec<String>)> {
+        let (direct_ids, registered_ids): (Vec<_>, Vec<_>) =
+            ids.iter().cloned().partition(|id| hbb_common::is_ip_str(id));
+        let direct_queries = join_all(direct_ids.iter().map(|id| probe_direct_peer(id, timeout)));
+        let registered_query = async {
+            if registered_ids.is_empty() {
+                Ok((vec![], vec![]))
+            } else {
+                query_online_states_(&registered_ids, timeout).await
+            }
+        };
+        let (direct_states, registered_states) =
+            hbb_common::tokio::join!(direct_queries, registered_query);
+        let (mut onlines, mut offlines) = match registered_states {
+            Ok(states) => states,
+            Err(e) => {
+                log::trace!("Failed to query registered peers online states, {e}");
+                (vec![], vec![])
+            }
+        };
+        for (id, online) in direct_ids.into_iter().zip(direct_states) {
+            if online {
+                onlines.push(id);
+            } else {
+                offlines.push(id);
+            }
+        }
+        Ok((onlines, offlines))
+    }
+
+    async fn probe_direct_peer(id: &str, query_timeout: std::time::Duration) -> bool {
+        let ms = query_timeout.as_millis() as u64;
+        matches!(
+            timeout(ms, async {
+                let mut stream = connect_tcp_local(check_port(id, RELAY_PORT + 1), None, ms).await?;
+                // Direct access sends its password challenge before any login request.
+                if let Some(bytes) = stream.next().await {
+                    let msg = Message::parse_from_bytes(&bytes?)?;
+                    if matches!(msg.union, Some(message::Union::Hash(_))) {
+                        return Ok::<_, hbb_common::anyhow::Error>(());
+                    }
+                }
+                bail!("No RustDesk direct access greeting");
+            })
+            .await,
+            Ok(Ok(()))
+        )
     }
 
     async fn query_online_states_(
@@ -5453,8 +5514,55 @@ pub mod peer_online {
 
     #[cfg(test)]
     mod tests {
+        use super::query_online_states_with_direct;
         use crate::client::Client;
-        use hbb_common::rendezvous_proto::IceCandidate;
+        use base::message_proto::{Hash, Message};
+        use hbb_common::{
+            config::RELAY_PORT,
+            rendezvous_proto::IceCandidate,
+            socket_client::check_port,
+            tcp::FramedStream,
+            tokio::{self, io::AsyncWriteExt, net::TcpListener},
+        };
+        use std::time::Duration;
+
+        #[tokio::test]
+        async fn direct_ip_with_port_is_online_after_rustdesk_greeting() {
+            assert_eq!(check_port("127.0.0.1", RELAY_PORT + 1), "127.0.0.1:21118");
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let id = listener.local_addr().unwrap().to_string();
+            let server = tokio::spawn(async move {
+                let (stream, addr) = listener.accept().await.unwrap();
+                let mut stream = FramedStream::from(stream, addr);
+                let mut greeting = Message::new();
+                greeting.set_hash(Hash {
+                    salt: "salt".to_owned(),
+                    challenge: "challenge".to_owned(),
+                    ..Default::default()
+                });
+                stream.send(&greeting).await.unwrap();
+            });
+            let states = query_online_states_with_direct(&vec![id.clone()], Duration::from_secs(1))
+                .await
+                .unwrap();
+            assert_eq!(states, (vec![id], vec![]));
+            server.await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn unrelated_tcp_service_is_not_online() {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let id = listener.local_addr().unwrap().to_string();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
+            });
+            let states = query_online_states_with_direct(&vec![id.clone()], Duration::from_secs(1))
+                .await
+                .unwrap();
+            assert_eq!(states, (vec![], vec![id]));
+            server.await.unwrap();
+        }
 
         #[test]
         fn accepts_webrtc_ice_by_session_key_only() {

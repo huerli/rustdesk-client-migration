@@ -8,6 +8,28 @@
   <b>We need your help to translate this README, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk UI</a> and <a href="https://github.com/rustdesk/doc.rustdesk.com">RustDesk Doc</a> to your native language</b>
 </p>
 
+## 快速开始（Flutter 桌面客户端）
+
+先准备 Rust、C/C++ 工具链、Flutter，以及与当前源码匹配的 Flutter Rust Bridge 生成文件（从 CI 产物获取）。设置 `VCPKG_ROOT` 指向 vcpkg；在项目根目录执行以下命令，使用仓库的 `vcpkg.json` 安装包括 FFmpeg 在内的依赖，再构建启用 H.264 硬件编解码的客户端：
+
+```sh
+git submodule update --init --recursive
+"$VCPKG_ROOT/vcpkg" install --x-install-root="$VCPKG_ROOT/installed"
+python3 build.py --flutter --hwcodec
+```
+
+Windows PowerShell 的依赖安装命令为 `& "$env:VCPKG_ROOT/vcpkg.exe" install "--x-install-root=$env:VCPKG_ROOT/installed"`；Windows x86/x64 可额外传入 `--vram`。Linux 还需准备下文列出的系统开发依赖。构建脚本按当前系统打包，不会自动安装这些工具或系统依赖。
+
+已有生成文件和依赖时，可直接启动开发版本，无需运行桥接代码生成器：
+
+```sh
+cd flutter
+cargo build --locked --features flutter,hwcodec
+flutter run
+```
+
+在“设置 → 常规 → 硬件编解码”中启用硬件编解码，再到“设置 → 显示 → 默认编解码”选择 H264。选项根据本机解码能力显示；实际使用 H.264 还要求被控端有可用的 H.264 编码器。开发运行可按 `q` 退出，打包版本通过应用菜单退出。
+
 > [!Caution]
 > **Misuse Disclaimer:** <br>
 > The developers of RustDesk do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized access, control or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
