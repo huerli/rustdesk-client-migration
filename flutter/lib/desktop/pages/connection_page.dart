@@ -20,7 +20,6 @@ import '../../common.dart';
 import '../../common/formatter/id_formatter.dart';
 import '../../common/widgets/peer_tab_page.dart';
 import '../../common/widgets/autocomplete.dart';
-import '../../common/widgets/request_approval_menu.dart';
 import '../../models/platform_model.dart';
 import '../../desktop/widgets/material_mod_popup_menu.dart' as mod_menu;
 
@@ -1044,7 +1043,7 @@ class _ConnectionPageState extends State<ConnectionPage>
     );
   }
 
-  RequestApprovalMenu _requestApprovalMenu(BuildContext context) {
+  MenuEntrySubMenu<String> _requestApprovalMenu(BuildContext context) {
     MenuEntryButton<String> action(String title,
             {bool isFileTransfer = false,
             bool isViewCamera = false,
@@ -1062,8 +1061,9 @@ class _ConnectionPageState extends State<ConnectionPage>
           dismissOnClicked: true,
         );
 
-    return RequestApprovalMenu(
-      title: translate('Request approval'),
+    return MenuEntrySubMenu<String>(
+      text: translate('Request approval'),
+      dismissParentOnCanceled: true,
       padding: EdgeInsets.symmetric(horizontal: kDesktopMenuPadding.left),
       arrowScale: MenuConfig.iconScale,
       entries: [
