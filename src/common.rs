@@ -2967,6 +2967,7 @@ pub async fn bind_multiport_udp_sockets(
     count: usize,
     bind_addr: SocketAddr,
 ) -> ResultType<Vec<Arc<UdpSocket>>> {
+    ensure_multiport_fd_budget(count);
     let bind_addr = SocketAddr::new(bind_addr.ip(), 0);
     let mut sockets = Vec::with_capacity(count);
     for _ in 0..count {
@@ -2974,6 +2975,43 @@ pub async fn bind_multiport_udp_sockets(
     }
     Ok(sockets)
 }
+
+#[cfg(unix)]
+fn ensure_multiport_fd_budget(socket_count: usize) {
+    use std::sync::Once;
+
+    static RAISE_LIMIT: Once = Once::new();
+    RAISE_LIMIT.call_once(|| unsafe {
+        use hbb_common::libc;
+
+        let mut limits = std::mem::zeroed::<libc::rlimit>();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limits) != 0 {
+            log::warn!("Failed to read RLIMIT_NOFILE for multiport UDP");
+            return;
+        }
+        let desired = (socket_count.saturating_add(512) as libc::rlim_t)
+            .min(libc::RLIM_INFINITY);
+        if limits.rlim_cur >= desired {
+            return;
+        }
+        let new_limit = if limits.rlim_max == libc::RLIM_INFINITY {
+            desired
+        } else {
+            desired.min(limits.rlim_max)
+        };
+        limits.rlim_cur = new_limit;
+        if libc::setrlimit(libc::RLIMIT_NOFILE, &limits) != 0 {
+            log::warn!(
+                "Failed to raise RLIMIT_NOFILE to {} for multiport UDP: {}",
+                new_limit,
+                std::io::Error::last_os_error()
+            );
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn ensure_multiport_fd_budget(_socket_count: usize) {}
 
 fn punch_port_candidates(base: u16, radius: u16) -> Vec<u16> {
     let mut ports = Vec::with_capacity(radius as usize * 2 + 1);

@@ -1481,19 +1481,26 @@ impl Client {
             );
         }
         if let Some(udp_socket_nat) = udp_socket_nat {
-            if let Ok(peer) = udp_socket_nat.peer_addr() {
-                if let Some(multiport) = multiport_punch_config(peer) {
-                    let socket = udp_socket_nat.clone();
-                    direct_futures.push(
-                        async move {
-                            let (conn, kcp, typ) =
-                                udp_multiport_connect(socket, "UDP", connect_timeout, multiport)
-                                    .await?;
-                            Ok((conn, kcp, typ, true))
-                        }
-                        .boxed(),
-                    );
-                }
+            if let Some(multiport) = multiport_punch_config(peer) {
+                let socket = udp_socket_nat.clone();
+                direct_futures.push(
+                    async move {
+                        let (conn, kcp, typ) = udp_multiport_connect(
+                            socket,
+                            peer,
+                            "UDP",
+                            connect_timeout,
+                            multiport,
+                        )
+                        .await
+                        .map_err(|err| {
+                            log::warn!("multiport UDP punch failed: {err}");
+                            err
+                        })?;
+                        Ok((conn, kcp, typ, true))
+                    }
+                    .boxed(),
+                );
             }
             direct_futures.push(
                 async move {
@@ -5718,11 +5725,11 @@ async fn udp_nat_connect(
 
 async fn udp_multiport_connect(
     base_socket: Arc<UdpSocket>,
+    peer: SocketAddr,
     typ: &'static str,
     ms_timeout: u64,
     config: crate::common::MultiportPunchConfig,
 ) -> ResultType<(Stream, Option<KcpStream>, &'static str)> {
-    let peer = base_socket.peer_addr()?;
     let local_addr = base_socket.local_addr()?;
     let sockets = bind_multiport_udp_sockets(config.socket_count, local_addr).await?;
     let started = Instant::now();
