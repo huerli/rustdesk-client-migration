@@ -285,7 +285,14 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
                 const Divider(height: 1),
                 Expanded(
                   child: Container(
-                    color: Theme.of(context).scaffoldBackgroundColor,
+                    color: Color.alphaBlend(
+                      Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withOpacity(0.025),
+                      Theme.of(context).scaffoldBackgroundColor,
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: PageView(
                       controller: controller,
                       physics: NeverScrollableScrollPhysics(),
@@ -306,120 +313,99 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
     final tabs = _settingTabs();
     return Container(
       color: theme.scaffoldBackgroundColor,
-      padding: const EdgeInsets.only(top: 8, bottom: 8),
-      child: Column(
-        children: [
-          SizedBox(
-            height: 44,
-            child: Stack(
-              alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      alignment: Alignment.center,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: _kCardFixedWidth),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
+                if (isWeb)
+                  IconButton(
+                    onPressed: () {
+                      if (Navigator.canPop(context)) {
+                        Navigator.pop(context);
+                      }
+                    },
+                    icon: const Icon(Icons.arrow_back),
+                  ),
                 Text(
                   translate('Settings'),
                   style: theme.textTheme.titleMedium?.copyWith(
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                if (isWeb)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: IconButton(
-                      onPressed: () {
-                        if (Navigator.canPop(context)) {
-                          Navigator.pop(context);
-                        }
-                      },
-                      icon: const Icon(Icons.arrow_back),
-                    ).marginOnly(left: 8),
-                  ),
               ],
             ),
-          ),
-          const SizedBox(height: 4),
-          SizedBox(
-            height: 68,
-            child: Obx(
-              () => Center(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: tabs.map((tab) {
-                      final selected = tab.key == selectedTab.value;
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () {
-                          final index =
-                              DesktopSettingPage.tabKeys.indexOf(tab.key);
-                          if (index == -1) {
-                            return;
-                          }
-                          selectedTab.value = tab.key;
-                          controller.animateToPage(
-                            index,
-                            duration: const Duration(milliseconds: 180),
-                            curve: Curves.easeOut,
-                          );
-                        },
-                        child: Container(
-                          width: 88,
-                          height: 64,
-                          margin: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            color: selected
-                                ? theme.colorScheme.surface
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: selected
-                                ? [
-                                    BoxShadow(
-                                      color: Colors.black
-                                          .withOpacity(theme.brightness ==
-                                                  Brightness.dark
-                                              ? 0.22
-                                              : 0.06),
-                                      blurRadius: 16,
-                                      offset: const Offset(0, 5),
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                selected ? tab.selected : tab.unselected,
-                                size: 27,
-                                color: selected
-                                    ? _accentColor
-                                    : theme.colorScheme.onSurface
-                                        .withOpacity(0.55),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                translate(tab.label),
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: selected
-                                      ? _accentColor
-                                      : theme.colorScheme.onSurface
-                                          .withOpacity(0.62),
-                                  fontWeight: selected
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
+            const SizedBox(height: 14),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Obx(
+                () => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: tabs.map((tab) {
+                    final selected = tab.key == selectedTab.value;
+                    final color = selected
+                        ? _accentColor
+                        : theme.colorScheme.onSurface.withOpacity(0.65);
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Material(
+                        color: selected
+                            ? _accentColor.withOpacity(0.09)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () {
+                            final index =
+                                DesktopSettingPage.tabKeys.indexOf(tab.key);
+                            if (index == -1) {
+                              return;
+                            }
+                            selectedTab.value = tab.key;
+                            controller.animateToPage(
+                              index,
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOut,
+                            );
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  selected ? tab.selected : tab.unselected,
+                                  size: 20,
+                                  color: color,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 8),
+                                Text(
+                                  translate(tab.label),
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: color,
+                                    fontWeight: selected
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      );
-                    }).toList(),
-                  ),
+                      ),
+                    );
+                  }).toList(),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1061,14 +1047,10 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
         controller: scrollController,
         child: Column(
           children: [
-            _lock(locked, 'Unlock Security Settings', () {
-              locked = false;
-              setState(() => {});
-            }),
+            permissions(context),
             preventMouseKeyBuilder(
               block: locked,
               child: Column(children: [
-                permissions(context),
                 password(context),
                 _Card(title: '2FA', children: [tfa()]),
                 if (!isChangeIdDisabled())
@@ -1259,7 +1241,12 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
           break;
       }
 
-      return _Card(title: 'Permissions', children: [
+      return _Card(title: 'Permissions', title_suffix: [
+        _lock(locked, 'Unlock Security Settings', () {
+          locked = false;
+          setState(() => {});
+        }),
+      ], children: [
         ComboBox(
             keys: [
               defaultOptionAccessMode,
@@ -1319,7 +1306,9 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
                 enabled: enabled, fakeValue: fakeValue),
           ],
         ),
-      ]);
+      ]
+          .map((child) => preventMouseKeyBuilder(block: locked, child: child))
+          .toList());
     }
 
     return tmpWrapper();
@@ -1846,18 +1835,10 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return ListView(controller: scrollController, children: [
-      _lock(locked, 'Unlock Network Settings', () {
-        locked = false;
-        setState(() => {});
-      }),
-      preventMouseKeyBuilder(
-        block: locked,
-        child: Column(children: [
-          network(context),
-        ]),
-      ),
-    ]).marginOnly(bottom: _kListViewBottomMargin);
+    return ListView(
+      controller: scrollController,
+      children: [network(context)],
+    ).marginOnly(bottom: _kListViewBottomMargin);
   }
 
   Widget network(BuildContext context) {
@@ -1881,50 +1862,46 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
       bool showTooltip = false,
       String tooltipMessage = '',
     }) {
-      final titleWidget = showTooltip
-          ? Row(
-              children: [
-                Tooltip(
-                  waitDuration: Duration(milliseconds: 1000),
-                  message: translate(tooltipMessage),
-                  child: Row(
-                    children: [
-                      Text(
-                        translate(title),
-                        style: TextStyle(fontSize: _kContentFontSize),
-                      ),
-                      SizedBox(width: 5),
-                      Icon(
-                        Icons.help_outline,
-                        size: 14,
-                        color: Theme.of(context)
-                            .textTheme
-                            .titleLarge
-                            ?.color
-                            ?.withOpacity(0.7),
-                      ),
-                    ],
+      final theme = Theme.of(context);
+      final color =
+          theme.colorScheme.onSurface.withOpacity(locked ? 0.55 : 0.9);
+      final titleWidget = Text.rich(
+        TextSpan(
+          text: translate(title),
+          children: showTooltip
+              ? [
+                  WidgetSpan(
+                    alignment: PlaceholderAlignment.middle,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Icon(Icons.help_outline, size: 14, color: color),
+                    ),
                   ),
-                ),
-              ],
-            )
-          : Text(
-              translate(title),
-              style: TextStyle(fontSize: _kContentFontSize),
-            );
+                ]
+              : null,
+        ),
+        style: TextStyle(fontSize: _kContentFontSize, color: color),
+      );
 
       return ListTile(
-        leading: Icon(icon, color: _accentColor),
-        title: titleWidget,
+        leading: Icon(icon,
+            size: 22, color: locked ? theme.disabledColor : _accentColor),
+        title: showTooltip
+            ? Tooltip(
+                waitDuration: const Duration(milliseconds: 1000),
+                message: translate(tooltipMessage),
+                child: titleWidget,
+              )
+            : titleWidget,
         enabled: !locked,
         onTap: onTap,
-        trailing: trailing,
+        trailing: trailing ?? Icon(Icons.chevron_right, size: 20, color: color),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
         ),
-        contentPadding: EdgeInsets.symmetric(horizontal: 16),
-        minLeadingWidth: 0,
-        horizontalTitleGap: 10,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        minLeadingWidth: 24,
+        horizontalTitleGap: 12,
       );
     }
 
@@ -1951,8 +1928,46 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     final divider = const Divider(height: 1, indent: 16, endIndent: 16);
     return _Card(
       title: 'Network',
+      title_suffix: [
+        if (locked)
+          Flexible(
+            flex: 2,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.lock_outline, size: 16),
+              label: Text(translate('Unlock Network Settings'),
+                  maxLines: 2, textAlign: TextAlign.center),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _accentColor,
+                side: BorderSide(color: _accentColor.withOpacity(0.25)),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                textStyle:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+              onPressed: () async {
+                void unlock() {
+                  if (mounted) {
+                    setState(() => locked = false);
+                  }
+                }
+
+                final unlockPin = bind.mainGetUnlockPin();
+                if (unlockPin.isEmpty || isUnlockPinDisabled()) {
+                  if (await callMainCheckSuperUserPermission()) {
+                    unlock();
+                  }
+                } else {
+                  checkUnlockPinDialog(unlockPin, unlock);
+                }
+              },
+            ),
+          ),
+      ],
       children: [
-        Container(
+        preventMouseKeyBuilder(
+          block: locked,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3071,43 +3086,34 @@ Widget _lock(
   String label,
   Function() onUnlock,
 ) {
-  return Offstage(
+  return Flexible(
+    flex: 2,
+    child: Offstage(
       offstage: !locked,
-      child: Row(
-        children: [
-          Flexible(
-            child: SizedBox(
-              width: _kCardFixedWidth,
-              child: Card(
-                child: ElevatedButton(
-                  child: SizedBox(
-                      height: 25,
-                      child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.security_sharp,
-                              size: 20,
-                            ),
-                            Text(translate(label)).marginOnly(left: 5),
-                          ]).marginSymmetric(vertical: 2)),
-                  onPressed: () async {
-                    final unlockPin = bind.mainGetUnlockPin();
-                    if (unlockPin.isEmpty || isUnlockPinDisabled()) {
-                      bool checked = await callMainCheckSuperUserPermission();
-                      if (checked) {
-                        onUnlock();
-                      }
-                    } else {
-                      checkUnlockPinDialog(unlockPin, onUnlock);
-                    }
-                  },
-                ).marginSymmetric(horizontal: 2, vertical: 4),
-              ).marginOnly(left: _kCardLeftMargin),
-            ).marginOnly(top: 10),
-          ),
-        ],
-      ));
+      child: OutlinedButton.icon(
+        icon: const Icon(Icons.lock_outline, size: 16),
+        label: Text(translate(label), maxLines: 2, textAlign: TextAlign.center),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: _accentColor,
+          side: BorderSide(color: _accentColor.withOpacity(0.25)),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+        ),
+        onPressed: () async {
+          final unlockPin = bind.mainGetUnlockPin();
+          if (unlockPin.isEmpty || isUnlockPinDisabled()) {
+            bool checked = await callMainCheckSuperUserPermission();
+            if (checked) {
+              onUnlock();
+            }
+          } else {
+            checkUnlockPinDialog(unlockPin, onUnlock);
+          }
+        },
+      ),
+    ),
+  );
 }
 
 _LabeledTextField(

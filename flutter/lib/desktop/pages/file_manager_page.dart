@@ -584,10 +584,15 @@ class _FileManagerViewState extends State<FileManagerView> {
                                   );
                                 }
                               })),
-                      Text(isLocal
+                      Flexible(
+                        child: Text(
+                          isLocal
                               ? translate("Local Computer")
-                              : translate("Remote Computer"))
-                          .marginOnly(left: 8.0)
+                              : translate("Remote Computer"),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ).marginOnly(left: 8.0),
+                      )
                     ],
                   ),
                   preferredSize: Size(double.infinity, 70))

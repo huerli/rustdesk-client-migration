@@ -66,11 +66,12 @@ class _DesktopAssistancePageState extends State<DesktopAssistancePage> {
       title: 'Your Device',
       action: Obx(() {
         final stopped = widget.serviceStopped.value;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
+        return Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 4,
           children: [
             Text(translate('Incoming connection')),
-            const SizedBox(width: 8),
             if (isLinux)
               Text(translate(
                   stopped ? 'Service is not running' : 'Service is running'))

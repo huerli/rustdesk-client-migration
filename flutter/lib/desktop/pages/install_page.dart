@@ -225,7 +225,8 @@ class _InstallPageBodyState extends State<_InstallPageBody>
                     children: [
                       Icon(Icons.info_outline_rounded, size: 32)
                           .marginOnly(right: 16),
-                      Column(
+                      Expanded(
+                          child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(translate('agreement_tip'))
@@ -239,16 +240,17 @@ class _InstallPageBodyState extends State<_InstallPageBody>
                               child: Row(children: [
                                 Icon(Icons.launch_outlined, size: 16)
                                     .marginOnly(right: 5),
-                                Text(
+                                Flexible(
+                                    child: Text(
                                   translate('End-user license agreement'),
                                   style: const TextStyle(
                                       decoration: TextDecoration.underline),
-                                )
+                                ))
                               ]),
                             ),
                           ),
                         ],
-                      )
+                      ))
                     ],
                   )).marginSymmetric(vertical: 2 * em),
               Row(

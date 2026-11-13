@@ -370,8 +370,8 @@ class TrackpadSpeedWidgetState extends State<TrackpadSpeedWidget> {
             onChanged: (double v) => updateValue(v.round()),
           ),
         ),
-        Expanded(
-            flex: 1,
+        SizedBox(
+            width: 96,
             child: Row(
               children: [
                 SizedBox(
