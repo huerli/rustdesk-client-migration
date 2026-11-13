@@ -260,42 +260,6 @@ class _HeroDivider extends StatelessWidget {
   }
 }
 
-class _DashedBorderPainter extends CustomPainter {
-  final Color color;
-
-  const _DashedBorderPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          (Offset.zero & size).deflate(0.75),
-          const Radius.circular(14),
-        ),
-      );
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    for (final metric in path.computeMetrics()) {
-      var distance = 0.0;
-      while (distance < metric.length) {
-        canvas.drawPath(
-          metric.extractPath(distance, distance + 7),
-          paint,
-        );
-        distance += 12;
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DashedBorderPainter oldDelegate) {
-    return oldDelegate.color != color;
-  }
-}
-
 Future<String?> _askRemoteId(BuildContext context) {
   return showDialog<String>(
     context: context,
@@ -534,8 +498,6 @@ class _ConnectionPageState extends State<ConnectionPage>
                                 child: _buildHeroCard(context, heroHeight),
                               ),
                             ),
-                            const SizedBox(height: 36),
-                            _buildQuickLaunch(context),
                           ],
                         ),
                       ),
@@ -556,6 +518,7 @@ class _ConnectionPageState extends State<ConnectionPage>
   }
 
   Widget _buildWorkspaceHeader(BuildContext context) {
+    if (widget.showAllDevices) return _buildDeviceListHeader(context);
     final theme = Theme.of(context);
     final peer = widget.selectedPeer;
     final online = peer?.online ?? true;
@@ -671,6 +634,38 @@ class _ConnectionPageState extends State<ConnectionPage>
             ]),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDeviceListHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    final model = gFFI.peerTabModel;
+    return ListenableBuilder(
+      listenable: model,
+      builder: (context, _) => Container(
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border(bottom: BorderSide(color: theme.dividerColor)),
+        ),
+        child: Row(children: [
+          Icon(Icons.devices_outlined,
+              size: 23, color: theme.colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              model.currentTab == 0
+                  ? translate('All devices')
+                  : model.tabTooltip(model.currentTab),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleLarge
+                  ?.copyWith(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ]),
       ),
     );
   }
@@ -943,72 +938,6 @@ class _ConnectionPageState extends State<ConnectionPage>
           ],
         );
       },
-    );
-  }
-
-  Widget _buildQuickLaunch(BuildContext context) {
-    final theme = Theme.of(context);
-    final border = theme.brightness == Brightness.dark
-        ? MyTheme.borderDark
-        : MyTheme.borderLight;
-    return Padding(
-      padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                translate('Quick launch'),
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          InkWell(
-            borderRadius: BorderRadius.circular(14),
-            onTap: _showConnectPanel,
-            child: CustomPaint(
-              painter: _DashedBorderPainter(color: border),
-              child: SizedBox(
-                height: 220,
-                width: double.infinity,
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 60,
-                        height: 60,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.background,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.add_rounded,
-                          size: 32,
-                          color: theme.colorScheme.onBackground.withOpacity(.7),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        translate('Add'),
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
