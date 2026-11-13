@@ -96,13 +96,18 @@ const MAX_PENDING_REMOTE_ICE: usize = 256;
 /// Queued candidates remembered so the controller's re-send is skipped instead of taking a slot
 /// of its own. Far more than an honest peer gathers, at eight bytes each.
 const ICE_DEDUP_WINDOW: usize = 256;
+/// The controller can spend almost one `CONNECT_TIMEOUT` punching before ICE and DTLS finish.
+/// Give the answerer two budgets so it cannot close the peer connection in the same instant the
+/// controller opens the data channel. The controller's own timeout still bounds an abandoned
+/// attempt.
+const WEBRTC_ANSWER_TIMEOUT_MS: u64 = CONNECT_TIMEOUT * 2;
 /// Answerers between an offer and an open data channel. An offer arrives before any password or
 /// accept prompt, and each one builds a peer connection that binds a socket per interface and
-/// runs ICE for up to `CONNECT_TIMEOUT`, where a forged TCP punch costs one connect. Past this
-/// many the offer is declined, and the controller carries on over punch and relay as it does
-/// for a peer without WebRTC. A guard against pathological setup concurrency, above what
-/// legitimate controllers reach at once in the seconds ICE takes; once the channel is open the
-/// connection is one like any other, and the connection layer bounds unauthenticated
+/// runs ICE for up to `WEBRTC_ANSWER_TIMEOUT_MS`, where a forged TCP punch costs one connect.
+/// Past this many the offer is declined, and the controller carries on over punch and relay as
+/// it does for a peer without WebRTC. A guard against pathological setup concurrency, above
+/// what legitimate controllers reach at once in the seconds ICE takes; once the channel is open
+/// the connection is one like any other, and the connection layer bounds unauthenticated
 /// connections in number and in time for every transport alike.
 const MAX_WEBRTC_ANSWERERS: usize = 16;
 static WEBRTC_ANSWERERS: AtomicUsize = AtomicUsize::new(0);
@@ -1052,7 +1057,7 @@ impl RendezvousMediator {
 
         let session_key_for_cleanup = session_key.clone();
         tokio::spawn(async move {
-            let result = stream.wait_connected(CONNECT_TIMEOUT).await;
+            let result = stream.wait_connected(WEBRTC_ANSWER_TIMEOUT_MS).await;
             // Only evict our own route. The key is the offer's DTLS fingerprint, identical across
             // the controller's punch retries, so a retry that built a fresh answerer has already
             // replaced this entry — removing it blindly would delete the live session's sender and
