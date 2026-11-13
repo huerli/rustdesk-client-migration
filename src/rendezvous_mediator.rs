@@ -34,6 +34,10 @@ use base::config::keys::*;
 
 use crate::{
     check_port,
+    common::{
+        bind_multiport_udp_sockets, multiport_punch_config, punch_udp_multiport,
+        MultiportPunchConfig,
+    },
     server::{check_zombie, new as new_server, ConnectionMeta, ServerPtr},
 };
 
@@ -88,7 +92,7 @@ lazy_static::lazy_static! {
 /// Remote ICE candidates buffered per session while the answerer applies them. Same depth as the
 /// controller's own buffer (`Client::MAX_PENDING_WEBRTC_ICE`), though that one evicts its oldest
 /// where a full channel here refuses the newest.
-const MAX_PENDING_REMOTE_ICE: usize = 64;
+const MAX_PENDING_REMOTE_ICE: usize = 256;
 /// Queued candidates remembered so the controller's re-send is skipped instead of taking a slot
 /// of its own. Far more than an honest peer gathers, at eight bytes each.
 const ICE_DEDUP_WINDOW: usize = 256;
@@ -1530,6 +1534,22 @@ async fn udp_nat_listen(
     slot: PunchSlot,
 ) -> ResultType<()> {
     let tm = Instant::now();
+    if let Some(config) = multiport_punch_config(peer_addr) {
+        match udp_multiport_accept(socket.local_addr()?, peer_addr, config).await {
+            Ok((kcp, stream)) => {
+                drop(slot);
+                crate::server::create_tcp_connection(server, stream, peer_addr_v4, true, meta)
+                    .await?;
+                drop(kcp);
+                return Ok(());
+            }
+            Err(err) => {
+                log::info!(
+                    "multiport UDP listener for {peer_addr} failed, falling back to the base socket: {err}"
+                );
+            }
+        }
+    }
     let socket_cloned = socket.clone();
     let func = async {
         socket.connect(peer_addr).await?;
@@ -1554,6 +1574,39 @@ async fn udp_nat_listen(
         )
     })?;
     Ok(())
+}
+
+async fn udp_multiport_accept(
+    local_addr: SocketAddr,
+    peer_addr: SocketAddr,
+    config: MultiportPunchConfig,
+) -> ResultType<(crate::kcp_stream::KcpStream, Stream)> {
+    let sockets = bind_multiport_udp_sockets(config.socket_count, local_addr).await?;
+    let started = Instant::now();
+    let (socket, peer, init_packet, stats) = punch_udp_multiport(
+        sockets,
+        peer_addr,
+        true,
+        Duration::from_millis(CONNECT_TIMEOUT.max(3000)),
+        config,
+    )
+    .await?;
+    log::info!(
+        "multiport UDP listener confirmed in {:?}, {} probes sent, {} probes received, {} recv errors, {} sockets",
+        started.elapsed(),
+        stats.probes_sent,
+        stats.probes_seen,
+        stats.recv_errors,
+        config.socket_count,
+    );
+    socket.connect(peer).await?;
+    crate::kcp_stream::KcpStream::accept(
+        socket,
+        Duration::from_millis(CONNECT_TIMEOUT as _),
+        init_packet,
+    )
+    .await
+    .map_err(Into::into)
 }
 
 /// Where the repeats start, and the factor they slow by. The controller's SYN arrives once, at an

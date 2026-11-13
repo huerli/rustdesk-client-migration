@@ -2,7 +2,10 @@ use std::{
     collections::HashMap,
     future::Future,
     net::SocketAddr,
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex, RwLock,
+    },
     task::Poll,
 };
 
@@ -19,7 +22,7 @@ use hbb_common::{
     bytes::Bytes,
     config::{self, use_ws, Config, LocalConfig, CONNECT_TIMEOUT, READ_TIMEOUT, RENDEZVOUS_PORT},
     futures::future::join_all,
-    futures_util::future::poll_fn,
+    futures_util::future::{poll_fn, select_ok, FutureExt},
     get_version_number, log,
     protobuf::{Enum, Message as _},
     rendezvous_proto::*,
@@ -2912,6 +2915,217 @@ fn punch_tid(packet: &[u8], tag: &[u8; 4]) -> Option<u64> {
     packet[4..].try_into().ok().map(u64::from_le_bytes)
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct MultiportPunchConfig {
+    pub socket_count: usize,
+    pub port_radius: u16,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MultiportPunchStats {
+    pub probes_sent: u32,
+    pub probes_seen: u32,
+    pub recv_errors: u32,
+}
+
+#[derive(Default)]
+struct MultiportPunchCounters {
+    probes_sent: AtomicU32,
+    probes_seen: AtomicU32,
+    recv_errors: AtomicU32,
+}
+
+type MultiportPunchWinner = (Arc<UdpSocket>, SocketAddr, Option<bytes::BytesMut>);
+
+fn env_value<T: std::str::FromStr>(key: &str) -> Option<T> {
+    std::env::var(key).ok()?.parse().ok()
+}
+
+/// Port spraying is opt-out so existing installations pick it up after an upgrade. The
+/// environment switches are deliberately not UI options: they are escape hatches for constrained
+/// networks and for measuring packet pressure while this transport is still experimental.
+pub fn multiport_punch_config(peer: SocketAddr) -> Option<MultiportPunchConfig> {
+    let enabled = env_value::<u8>("RUSTDESK_MULTIPORT_PUNCH")
+        .map(|value| value != 0)
+        .unwrap_or(true);
+    if !enabled || !peer.is_ipv4() || peer.port() == 0 || peer.ip().is_loopback() {
+        return None;
+    }
+    let socket_count = env_value::<usize>("RUSTDESK_MULTIPORT_PUNCH_SOCKETS")
+        .unwrap_or(128)
+        .clamp(2, 256);
+    let port_radius = env_value::<u16>("RUSTDESK_MULTIPORT_PUNCH_PORT_RADIUS")
+        .unwrap_or(64)
+        .clamp(1, 256);
+    Some(MultiportPunchConfig {
+        socket_count,
+        port_radius,
+    })
+}
+
+pub async fn bind_multiport_udp_sockets(
+    count: usize,
+    bind_addr: SocketAddr,
+) -> ResultType<Vec<Arc<UdpSocket>>> {
+    let bind_addr = SocketAddr::new(bind_addr.ip(), 0);
+    let mut sockets = Vec::with_capacity(count);
+    for _ in 0..count {
+        sockets.push(Arc::new(UdpSocket::bind(bind_addr).await?));
+    }
+    Ok(sockets)
+}
+
+fn punch_port_candidates(base: u16, radius: u16) -> Vec<u16> {
+    let mut ports = Vec::with_capacity(radius as usize * 2 + 1);
+    if base > 0 {
+        ports.push(base);
+    }
+    for delta in 1..=radius {
+        if let Some(port) = base.checked_add(delta).filter(|port| *port > 0) {
+            ports.push(port);
+        }
+        if let Some(port) = base.checked_sub(delta).filter(|port| *port > 0) {
+            ports.push(port);
+        }
+    }
+    ports
+}
+
+async fn punch_udp_multiport_socket(
+    socket: Arc<UdpSocket>,
+    peer_ip: std::net::IpAddr,
+    targets: Arc<Vec<SocketAddr>>,
+    listen: bool,
+    max_time: Duration,
+    tid: u64,
+    counters: Arc<MultiportPunchCounters>,
+) -> ResultType<MultiportPunchWinner> {
+    if targets.is_empty() {
+        bail!("multiport punch has no target ports");
+    }
+    let probe = punch_packet(&PUNCH_PROBE, tid);
+    let local_port = socket.local_addr().map(|addr| addr.port()).unwrap_or(0);
+    let mut data = [0u8; 1500];
+    let start = Instant::now();
+    let deadline = start + max_time;
+    // Stagger source sockets so the peer sees a rolling spray instead of one packet burst.
+    let mut next_probe = start + Duration::from_millis((local_port as u64 % 25) + 1);
+    let mut target_index = local_port as usize % targets.len();
+    let mut round = 0u32;
+    let mut acked = false;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                let sent = counters.probes_sent.load(Ordering::Relaxed);
+                let seen = counters.probes_seen.load(Ordering::Relaxed);
+                bail!(
+                    "multiport UDP punch is timed out, {sent} probes sent, {seen} probes received, acked: {acked}"
+                );
+            }
+            _ = tokio::time::sleep_until(next_probe) => {
+                // Eight destinations per socket per round covers the full prediction range in a
+                // few hundred milliseconds without creating a single unbounded packet burst.
+                for _ in 0..8.min(targets.len()) {
+                    let target = targets[target_index % targets.len()];
+                    target_index = target_index.wrapping_add(1);
+                    if socket.send_to(&probe, target).await.is_ok() {
+                        counters.probes_sent.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                round = round.saturating_add(1);
+                let interval = if round < 8 { 25 } else { 125 };
+                next_probe = Instant::now() + Duration::from_millis(interval);
+            }
+            res = socket.recv_from(&mut data) => {
+                match res {
+                    Err(_) => {
+                        counters.recv_errors.fetch_add(1, Ordering::Relaxed);
+                        hbb_common::sleep(0.01).await;
+                    }
+                    Ok((n, source)) => {
+                        if source.ip() != peer_ip {
+                            continue;
+                        }
+                        let ack = punch_tid(&data[..n], &PUNCH_ACK);
+                        if ack == Some(tid) {
+                            if !listen {
+                                return Ok((socket, source, None));
+                            }
+                            acked = true;
+                        } else if let Some(peer_tid) = punch_tid(&data[..n], &PUNCH_PROBE) {
+                            counters.probes_seen.fetch_add(1, Ordering::Relaxed);
+                            let _ = socket
+                                .send_to(&punch_packet(&PUNCH_ACK, peer_tid), source)
+                                .await;
+                        } else if n > 0 {
+                            // The peer has started KCP. Its SYN is sent once, so hand the exact
+                            // socket and datagram to the accept path instead of dropping it.
+                            return Ok((
+                                socket,
+                                source,
+                                Some(bytes::BytesMut::from(&data[..n])),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Multi-socket, predicted-port punching. Each socket probes a rotating batch of ports around the
+/// peer's rendezvous-observed UDP port. The peer does the same, so simultaneous outbound packets
+/// open restrictive NAPT filters on both sides. The first pair that completes the probe/ACK
+/// exchange wins and is returned ready to be connected to KCP.
+pub async fn punch_udp_multiport(
+    sockets: Vec<Arc<UdpSocket>>,
+    peer_base: SocketAddr,
+    listen: bool,
+    max_time: Duration,
+    config: MultiportPunchConfig,
+) -> ResultType<(
+    Arc<UdpSocket>,
+    SocketAddr,
+    Option<bytes::BytesMut>,
+    MultiportPunchStats,
+)> {
+    if sockets.is_empty() {
+        bail!("multiport punch has no sockets");
+    }
+    let targets = Arc::new(
+        punch_port_candidates(peer_base.port(), config.port_radius)
+            .into_iter()
+            .map(|port| SocketAddr::new(peer_base.ip(), port))
+            .collect::<Vec<_>>(),
+    );
+    let counters = Arc::new(MultiportPunchCounters::default());
+    let mut futures = Vec::with_capacity(sockets.len());
+    for socket in sockets.into_iter() {
+        let tid =
+            ((hbb_common::time_based_rand() as u64) << 32) | hbb_common::time_based_rand() as u64;
+        futures.push(
+            punch_udp_multiport_socket(
+                socket,
+                peer_base.ip(),
+                targets.clone(),
+                listen,
+                max_time,
+                tid,
+                counters.clone(),
+            )
+            .boxed(),
+        );
+    }
+    let ((socket, peer, init), _) = select_ok(futures).await.map_err(|err| anyhow!("{err}"))?;
+    let stats = MultiportPunchStats {
+        probes_sent: counters.probes_sent.load(Ordering::Relaxed),
+        probes_seen: counters.probes_seen.load(Ordering::Relaxed),
+        recv_errors: counters.recv_errors.load(Ordering::Relaxed),
+    };
+    Ok((socket, peer, init, stats))
+}
+
 /// Punch until one of our own probes is acknowledged. Both ends run this identically - each
 /// probes, each answers the other's probes - and each returns only once a reply carrying its own
 /// transaction id comes back, the one thing that proves the pair carries traffic both ways.
@@ -3101,6 +3315,54 @@ mod tests {
         self,
         time::{interval, interval_at, sleep, Duration, Instant, Interval},
     };
+
+    #[test]
+    fn multiport_candidates_are_bounded_and_include_the_observed_port() {
+        assert_eq!(punch_port_candidates(200, 2), vec![200, 201, 199, 202, 198]);
+        assert_eq!(punch_port_candidates(1, 3), vec![1, 2, 3, 4]);
+        assert_eq!(punch_port_candidates(65535, 2), vec![65535, 65534, 65533]);
+        assert_eq!(punch_port_candidates(0, 2), vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn multiport_punch_proves_a_bidirectional_loopback_pair() {
+        let controller = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let listener = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let controller_addr = controller.local_addr().unwrap();
+        let listener_addr = listener.local_addr().unwrap();
+        let config = MultiportPunchConfig {
+            socket_count: 1,
+            port_radius: 4,
+        };
+
+        let listener_task = tokio::spawn(async move {
+            punch_udp_multiport(
+                vec![listener],
+                controller_addr,
+                true,
+                Duration::from_secs(1),
+                config,
+            )
+            .await
+        });
+        let (controller_socket, listener_peer, _, _) = punch_udp_multiport(
+            vec![controller],
+            listener_addr,
+            false,
+            Duration::from_secs(1),
+            config,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listener_peer, listener_addr);
+        controller_socket
+            .send_to(b"kcp", listener_addr)
+            .await
+            .unwrap();
+
+        let (_, _, init, _) = listener_task.await.unwrap().unwrap();
+        assert_eq!(init.as_deref(), Some(&b"kcp"[..]));
+    }
 
     #[test]
     fn relay_uuid_rejects_control_bytes_but_not_other_id_formats() {

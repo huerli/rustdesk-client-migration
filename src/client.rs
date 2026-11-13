@@ -27,7 +27,11 @@ use uuid::Uuid;
 
 use crate::{
     check_port,
-    common::input::{MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP},
+    common::{
+        bind_multiport_udp_sockets,
+        input::{MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP},
+        multiport_punch_config, punch_udp_multiport,
+    },
     create_symmetric_key_msg, decode_id_pk, decode_id_pk_dtls, dtls_fingerprint_bound, get_rs_pk,
     is_keyboard_mode_supported,
     kcp_stream::KcpStream,
@@ -626,7 +630,7 @@ impl Client {
     /// Bounds memory if a misbehaving rendezvous floods candidates. On overflow the oldest is
     /// evicted: gathering order is host, then srflx, then relay, so the newest arrivals are the
     /// ones that traverse NAT.
-    const MAX_PENDING_WEBRTC_ICE: usize = 64;
+    const MAX_PENDING_WEBRTC_ICE: usize = 256;
 
     /// Default relay fallback delay: how long an already-established relay result is held back
     /// while a WebRTC attempt is still in flight, and the floor for a punch-path WebRTC attempt
@@ -1477,6 +1481,26 @@ impl Client {
             );
         }
         if let Some(udp_socket_nat) = udp_socket_nat {
+            if !is_local {
+                if let Ok(peer) = udp_socket_nat.peer_addr() {
+                    if let Some(multiport) = multiport_punch_config(peer) {
+                        let socket = udp_socket_nat.clone();
+                        direct_futures.push(
+                            async move {
+                                let (conn, kcp, typ) = udp_multiport_connect(
+                                    socket,
+                                    "UDP",
+                                    connect_timeout,
+                                    multiport,
+                                )
+                                .await?;
+                                Ok((conn, kcp, typ, true))
+                            }
+                            .boxed(),
+                        );
+                    }
+                }
+            }
             direct_futures.push(
                 async move {
                     let (conn, kcp, typ) =
@@ -5587,6 +5611,39 @@ async fn udp_nat_connect(
             log::debug!("Failed to connect KCP stream: {}", err);
             anyhow!(err)
         })?;
+    Ok((res.1, Some(res.0), typ))
+}
+
+async fn udp_multiport_connect(
+    base_socket: Arc<UdpSocket>,
+    typ: &'static str,
+    ms_timeout: u64,
+    config: crate::common::MultiportPunchConfig,
+) -> ResultType<(Stream, Option<KcpStream>, &'static str)> {
+    let peer = base_socket.peer_addr()?;
+    let local_addr = base_socket.local_addr()?;
+    let sockets = bind_multiport_udp_sockets(config.socket_count, local_addr).await?;
+    let started = Instant::now();
+    let (socket, peer, _, stats) = punch_udp_multiport(
+        sockets,
+        peer,
+        false,
+        Duration::from_millis(ms_timeout.max(3000)),
+        config,
+    )
+    .await?;
+    log::info!(
+        "multiport UDP punch confirmed in {:?}, {} probes sent, {} probes received, {} recv errors, {} sockets",
+        started.elapsed(),
+        stats.probes_sent,
+        stats.probes_seen,
+        stats.recv_errors,
+        config.socket_count,
+    );
+    socket.connect(peer).await?;
+    let res = KcpStream::connect(socket, Duration::from_millis(ms_timeout))
+        .await
+        .with_context(|| "Failed to connect multiport KCP stream")?;
     Ok((res.1, Some(res.0), typ))
 }
 
