@@ -3,7 +3,7 @@ use std::{
     future::Future,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
         Arc, Mutex, RwLock,
     },
     task::Poll,
@@ -124,6 +124,8 @@ impl Drop for SimpleCallOnReturn {
 }
 
 pub fn global_init() -> bool {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    crate::network_state::start_monitor();
     #[cfg(all(target_os = "linux", feature = "drm"))]
     crate::platform::linux::dispatch_wayland_display_probe();
     #[cfg(target_os = "linux")]
@@ -697,27 +699,52 @@ impl Drop for CheckTestNatType {
 
 pub fn test_nat_type() {
     test_ipv6_sync();
-    use std::sync::atomic::{AtomicBool, Ordering};
+    static NAT_TEST_RUNNING: AtomicBool = AtomicBool::new(false);
+    static NAT_TEST_GENERATION: AtomicUsize = AtomicUsize::new(0);
+
+    let generation = NAT_TEST_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     std::thread::spawn(move || {
-        static IS_RUNNING: AtomicBool = AtomicBool::new(false);
-        if IS_RUNNING.load(Ordering::SeqCst) {
+        // A probe started on the previous network may still be waiting on a timeout. Wait for it
+        // to observe the generation change, then let the newest probe own the result.
+        while NAT_TEST_RUNNING
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            if NAT_TEST_GENERATION.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if NAT_TEST_GENERATION.load(Ordering::SeqCst) != generation {
+            NAT_TEST_RUNNING.store(false, Ordering::SeqCst);
             return;
         }
-        IS_RUNNING.store(true, Ordering::SeqCst);
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         crate::ipc::get_socks_ws();
         let is_direct = Config::get_socks().is_none() && !config::use_ws();
         if !is_direct {
-            Config::set_nat_type(NatType::SYMMETRIC as _);
-            IS_RUNNING.store(false, Ordering::SeqCst);
+            if NAT_TEST_GENERATION.load(Ordering::SeqCst) == generation {
+                Config::set_nat_type(NatType::SYMMETRIC as _);
+            }
+            NAT_TEST_RUNNING.store(false, Ordering::SeqCst);
             return;
         }
 
         let mut i = 0;
         loop {
+            if NAT_TEST_GENERATION.load(Ordering::SeqCst) != generation {
+                break;
+            }
             match test_nat_type_() {
-                Ok(true) => break,
+                Ok(Some((nat_type, local_ip))) => {
+                    if NAT_TEST_GENERATION.load(Ordering::SeqCst) == generation {
+                        Config::set_option("local-ip-addr".to_owned(), local_ip);
+                        Config::set_nat_type(nat_type);
+                        log::info!("Tested nat type: {:?}", NatType::from_i32(nat_type));
+                    }
+                    break;
+                }
                 Err(err) => {
                     log::error!("test nat: {}", err);
                 }
@@ -730,17 +757,22 @@ pub fn test_nat_type() {
             if i > 300 {
                 i = 300;
             }
-            std::thread::sleep(std::time::Duration::from_secs(i));
+            let deadline = Instant::now() + Duration::from_secs(i);
+            while Instant::now() < deadline {
+                if NAT_TEST_GENERATION.load(Ordering::SeqCst) != generation {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
 
-        IS_RUNNING.store(false, Ordering::SeqCst);
+        NAT_TEST_RUNNING.store(false, Ordering::SeqCst);
     });
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn test_nat_type_() -> ResultType<bool> {
+async fn test_nat_type_() -> ResultType<Option<(i32, String)>> {
     log::info!("Testing nat ...");
-    let start = std::time::Instant::now();
     let server1 = Config::get_rendezvous_server();
     let server2 = crate::increase_port(&server1, -1);
     let mut msg_out = RendezvousMessage::new();
@@ -752,6 +784,7 @@ async fn test_nat_type_() -> ResultType<bool> {
     let mut port1 = 0;
     let mut port2 = 0;
     let mut local_addr = None;
+    let mut local_ip = String::new();
     for i in 0..2 {
         let server = if i == 0 { &*server1 } else { &*server2 };
         let mut socket =
@@ -759,10 +792,7 @@ async fn test_nat_type_() -> ResultType<bool> {
         if i == 0 {
             // reuse the local addr is required for nat test
             local_addr = Some(socket.local_addr());
-            Config::set_option(
-                "local-ip-addr".to_owned(),
-                socket.local_addr().ip().to_string(),
-            );
+            local_ip = socket.local_addr().ip().to_string();
         }
         socket.send(&msg_out).await?;
         if let Some(msg_in) = get_next_nonkeyexchange_msg(&mut socket, None).await {
@@ -785,10 +815,10 @@ async fn test_nat_type_() -> ResultType<bool> {
         } else {
             NatType::SYMMETRIC
         };
-        Config::set_nat_type(t as _);
-        log::info!("Tested nat type: {:?} in {:?}", t, start.elapsed());
+        Ok(Some((t as i32, local_ip)))
+    } else {
+        Ok(None)
     }
-    Ok(ok)
 }
 
 pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>, bool) {
@@ -2891,6 +2921,10 @@ pub async fn test_ipv6() -> Option<tokio::task::JoinHandle<()>> {
             }
         };
     }))
+}
+
+pub fn clear_ipv6_network_cache() {
+    *PUBLIC_IPV6_ADDR.lock().unwrap() = Default::default();
 }
 
 // A punch packet carries a magic and a transaction id so a reply can be *proven* to answer this

@@ -106,6 +106,13 @@ const ICE_DEDUP_WINDOW: usize = 256;
 /// connections in number and in time for every transport alike.
 const MAX_WEBRTC_ANSWERERS: usize = 16;
 static WEBRTC_ANSWERERS: AtomicUsize = AtomicUsize::new(0);
+/// Set by the network monitor. The server loop consumes it on its next tick and replaces the
+/// UDP rendezvous socket, whose source address and NAT mapping belong to the previous network.
+static NETWORK_STATE_CHANGED: AtomicBool = AtomicBool::new(false);
+
+pub fn notify_network_state_changed() {
+    NETWORK_STATE_CHANGED.store(true, Ordering::SeqCst);
+}
 
 /// One of the `MAX_WEBRTC_ANSWERERS` slots, given back on drop.
 struct AnswererSlot;
@@ -479,6 +486,17 @@ impl RendezvousMediator {
                 _ = timer.tick() => {
                     if SHOULD_EXIT.load(Ordering::SeqCst) {
                         break;
+                    }
+                    if NETWORK_STATE_CHANGED.swap(false, Ordering::SeqCst) {
+                        log::info!("Network changed, rebinding rendezvous UDP socket");
+                        if let Some((s, new_addr)) = socket_client::rebind_udp_for(&rz.host).await? {
+                            socket = s;
+                            rz.addr = new_addr.clone();
+                            addr = new_addr;
+                        }
+                        last_dns_check = Instant::now();
+                        fails = 0;
+                        reg_timeout = MIN_REG_TIMEOUT;
                     }
                     // The server already told us this device is not deployed. Skip
                     // the whole register / fails / latency / UDP-rebind path until
