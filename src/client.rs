@@ -1187,7 +1187,13 @@ impl Client {
                                     webrtc_fut,
                                     connect_futures,
                                     Self::relay_fallback_delay_ms(),
-                                    |result| result.3,
+                                    // A connected WebRTC session is upgradeable even when ICE
+                                    // initially nominated its TURN pair. Commit it immediately so
+                                    // the desktop can come up over relay, then let the still-live
+                                    // ICE agent nominate a direct pair and trigger the hot status
+                                    // migration in io_loop. Holding this result for the fallback
+                                    // window would delay the first useful connection by up to 30s.
+                                    |result| result.3 || result.2 == "WebRTC",
                                 )
                                 .await
                             }
