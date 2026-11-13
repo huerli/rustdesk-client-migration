@@ -1481,24 +1481,18 @@ impl Client {
             );
         }
         if let Some(udp_socket_nat) = udp_socket_nat {
-            if !is_local {
-                if let Ok(peer) = udp_socket_nat.peer_addr() {
-                    if let Some(multiport) = multiport_punch_config(peer) {
-                        let socket = udp_socket_nat.clone();
-                        direct_futures.push(
-                            async move {
-                                let (conn, kcp, typ) = udp_multiport_connect(
-                                    socket,
-                                    "UDP",
-                                    connect_timeout,
-                                    multiport,
-                                )
-                                .await?;
-                                Ok((conn, kcp, typ, true))
-                            }
-                            .boxed(),
-                        );
-                    }
+            if let Ok(peer) = udp_socket_nat.peer_addr() {
+                if let Some(multiport) = multiport_punch_config(peer) {
+                    let socket = udp_socket_nat.clone();
+                    direct_futures.push(
+                        async move {
+                            let (conn, kcp, typ) =
+                                udp_multiport_connect(socket, "UDP", connect_timeout, multiport)
+                                    .await?;
+                            Ok((conn, kcp, typ, true))
+                        }
+                        .boxed(),
+                    );
                 }
             }
             direct_futures.push(
