@@ -592,7 +592,9 @@ impl Client {
                 preferred_fut,
                 vec![fallback_fut],
                 Self::relay_fallback_delay_ms(),
-                |result| result.0 .1,
+                // A WebRTC TURN session is still worth committing before a plain relay: it is a
+                // live, authenticated ICE session that can migrate to a direct pair later.
+                |result| result.0 .1 || result.0 .4 == "WebRTC",
             )
             .await;
         }
@@ -1552,7 +1554,7 @@ impl Client {
                     webrtc_fut,
                     direct_futures,
                     Self::relay_fallback_delay_ms(),
-                    |r| r.3,
+                    |r| r.3 || r.2 == "WebRTC",
                 )
                 .await
             }

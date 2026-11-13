@@ -349,6 +349,24 @@ impl<T: InvokeUiSession> Remote<T> {
                             }
                         }
                         _ = status_timer.tick() => {
+                            if let Some(relayed) = peer.webrtc_relayed().await {
+                                let direct = !relayed;
+                                if self.handler.get_lch().read().unwrap().direct != Some(direct) {
+                                    let stream_type =
+                                        if peer.webrtc_remote_ipv6().await.unwrap_or(false) {
+                                            "WebRTC/IPv6"
+                                        } else {
+                                            "WebRTC"
+                                        };
+                                    self.handler.update_direct(Some(direct));
+                                    self.handler
+                                        .set_connection_type(peer.is_secured(), direct, stream_type);
+                                    log::info!(
+                                        "WebRTC candidate pair migrated to {}",
+                                        if relayed { "relay" } else { "direct" }
+                                    );
+                                }
+                            }
                             if self.handler.is_restarting_remote_device()
                                 && last_recv_time.elapsed() >= RESTART_REMOTE_DEVICE_NO_DATA_TIMEOUT
                             {
