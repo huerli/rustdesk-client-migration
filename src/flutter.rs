@@ -751,6 +751,10 @@ impl InvokeUiSession for FlutterHandler {
         );
     }
 
+    fn push_connection_log(&self, line: String) {
+        self.push_event("connection_log", &[("line", line)], &[]);
+    }
+
     fn set_fingerprint(&self, fingerprint: String) {
         self.push_event("fingerprint", &[("fingerprint", &fingerprint)], &[]);
     }

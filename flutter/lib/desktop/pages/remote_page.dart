@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 
 import '../../consts.dart';
+import '../../common/widgets/connection_log.dart';
 import '../../common/widgets/overlay.dart';
 import '../../common/widgets/remote_input.dart';
 import '../../common.dart';
@@ -192,8 +193,9 @@ class _RemotePageState extends State<RemotePage>
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
-      _ffi.dialogManager
-          .showLoading(translate('Connecting...'), onCancel: closeConnection);
+      _ffi.dialogManager.showLoading(translate('Connecting...'),
+          onCancel: closeConnection,
+          extra: ConnectionLogView(_ffi.connectionLogModel));
     });
     WakelockManager.enable(_uniqueKey);
 

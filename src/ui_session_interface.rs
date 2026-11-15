@@ -1648,6 +1648,8 @@ pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
     fn close_success(&self);
     fn update_quality_status(&self, qs: QualityStatus);
     fn set_connection_type(&self, is_secured: bool, direct: bool, stream_type: &str);
+    /// A connect-screen line; the UI that has no such view keeps the default.
+    fn push_connection_log(&self, _line: String) {}
     fn set_fingerprint(&self, fingerprint: String);
     fn job_error(&self, id: i32, err: String, file_num: i32);
     fn job_done(&self, id: i32, file_num: i32);
@@ -1735,6 +1737,10 @@ impl<T: InvokeUiSession> Interface for Session<T> {
         let retry_for_relay = direct == Some(true) && !received;
         let retry = check_if_retry(msgtype, title, text, retry_for_relay);
         self.ui_handler.msgbox(msgtype, title, text, link, retry);
+    }
+
+    fn connection_log(&self, line: &str) {
+        self.ui_handler.push_connection_log(line.to_owned());
     }
 
     fn handle_login_error(&self, err: &str) -> bool {

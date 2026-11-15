@@ -476,6 +476,7 @@ impl Client {
         } else {
             (peer, "", key, token)
         };
+        interface.connection_log(&format!("Connecting to {peer}"));
         let (rendezvous_server, servers, contained) = if other_server.is_empty() {
             crate::get_rendezvous_server(1_000).await
         } else {
@@ -930,11 +931,54 @@ impl Client {
             .map(|(socket, addr)| (Some(socket), Some(addr)))
             .unwrap_or((None, None));
         let udp_nat_port = udp.1.map(|x| *x.lock().unwrap()).unwrap_or(0);
-        let webrtc_sdp_offer = webrtc_offerer
+        // A rendezvous-observed port is only valid toward the rendezvous server on a CGNAT. Bind a
+        // few extra sockets and advertise every port they got, so the peer probes known candidates
+        // instead of a range predicted from that one port. Best effort: no candidate list leaves
+        // the punch exactly as it was.
+        let mut candidate_sockets: Option<Vec<Arc<UdpSocket>>> = None;
+        let mut candidate_ports: Vec<u16> = Vec::new();
+        let has_offerer = webrtc_offerer.as_ref().and_then(|g| g.stream()).is_some();
+        if has_offerer && udp_nat_port > 0 && crate::common::punch_candidates_enabled() {
+            if let Some(base) = udp.0.as_ref() {
+                if let Some(local) = base.local_addr().ok().filter(|addr| addr.is_ipv4()) {
+                    let count = crate::common::punch_candidate_sockets();
+                    if let Ok(sockets) = crate::common::bind_multiport_udp_sockets(count, local).await
+                    {
+                        let server = hbb_common::tokio::net::lookup_host(&rendezvous_server)
+                            .await
+                            .ok()
+                            .and_then(|mut addrs| addrs.find(|addr| addr.is_ipv4()));
+                        if let Some(server) = server {
+                            let mut ports =
+                                crate::common::gather_udp_punch_ports(&sockets, server, 800).await;
+                            ports.sort_unstable();
+                            ports.dedup();
+                            if !ports.is_empty() {
+                                log::debug!("advertising {} UDP punch candidates", ports.len());
+                                interface.connection_log(&format!(
+                                    "UDP candidates: {}",
+                                    ports.len()
+                                ));
+                                candidate_ports = ports;
+                                candidate_sockets = Some(sockets);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut webrtc_sdp_offer = webrtc_offerer
             .as_ref()
             .and_then(|g| g.stream())
             .map(|stream| stream.local_endpoint().to_owned())
             .unwrap_or_default();
+        if !candidate_ports.is_empty() {
+            if let Some(offer) =
+                crate::common::endpoint_with_punch_ports(&webrtc_sdp_offer, &candidate_ports)
+            {
+                webrtc_sdp_offer = offer;
+            }
+        }
         let allow_tcp_punch = tcp_punch_allowed() && request_allows_tcp_punch(&webrtc_sdp_offer);
         // Every direct transport this round carries, not one of them: a round can carry several
         // at once (a NAT port and an offer and a v6 address), and since the TCP punch became a
@@ -958,6 +1002,7 @@ impl Client {
         } else {
             transports.join("+")
         };
+        interface.connection_log(&format!("Punch: {punch_type}"));
         msg_out.set_punch_hole_request(PunchHoleRequest {
             id: peer.to_owned(),
             token: token.to_owned(),
@@ -981,6 +1026,7 @@ impl Client {
             .map(|stream| stream.session_key().to_owned())
             .unwrap_or_default();
         let mut webrtc_sdp_answer = String::new();
+        let mut peer_punch_ports: Vec<u16> = Vec::new();
         let mut pending_webrtc_ice = Vec::<String>::new();
         'punch_attempts: for i in 1..=3 {
             log::info!(
@@ -990,6 +1036,7 @@ impl Client {
                 my_addr,
                 peer
             );
+            interface.connection_log(&format!("Attempt #{i}: {punch_type} punch"));
             socket.send(&msg_out).await?;
             // below timeout should not bigger than hbbs's connection timeout.
             let attempt_deadline = Instant::now() + Duration::from_millis((i * 3000) as u64);
@@ -1035,6 +1082,8 @@ impl Client {
                             peer_addr = AddrMangle::decode(&ph.socket_addr);
                             feedback = ph.feedback;
                             webrtc_sdp_answer = ph.webrtc_sdp_answer;
+                            peer_punch_ports =
+                                crate::common::endpoint_punch_ports(&webrtc_sdp_answer);
                             let s = udp.0.take();
                             if udp_nat_port > 0 && ph.is_udp && s.is_some() {
                                 if let Some(s) = s {
@@ -1053,6 +1102,7 @@ impl Client {
                                 }
                             }
                             log::info!("{} Hole Punched {} = {}", punch_type, peer, peer_addr);
+                            interface.connection_log(&format!("Hole punched: {peer_addr}"));
                             break 'punch_attempts;
                         }
                     }
@@ -1062,6 +1112,7 @@ impl Client {
                             start.elapsed(),
                             rr.relay_server
                         );
+                        interface.connection_log(&format!("Relay requested: {}", rr.relay_server));
                         start = Instant::now();
                         let mut connect_futures = Vec::new();
                         if let Some(s) = ipv6.0 {
@@ -1083,6 +1134,7 @@ impl Client {
                         let mut webrtc_bridge_stop = None;
                         let mut webrtc_for_connect = None;
                         if !rr.webrtc_sdp_answer.is_empty() {
+                            interface.connection_log("WebRTC answer received");
                             if let Some(guard) = webrtc_offerer.take() {
                                 // Run the awaited setup on the guard's borrowed stream so a
                                 // cancellation during these awaits still closes the pc via the
@@ -1209,6 +1261,11 @@ impl Client {
                         let (mut conn, kcp, mut typ, mut direct) = race_result?;
                         feedback = rr.feedback;
                         log::info!("{:?} used to establish {typ} connection", start.elapsed());
+                        interface.connection_log(&format!(
+                            "Established {typ} in {:.1}s via relay ({})",
+                            start.elapsed().as_secs_f64(),
+                            if direct { "direct" } else { "relayed" }
+                        ));
                         let pk = match Self::secure_connection(
                             &peer,
                             signed_id_pk.clone(),
@@ -1396,6 +1453,8 @@ impl Client {
                 interface,
                 udp.0,
                 ipv6.0,
+                candidate_sockets,
+                peer_punch_ports,
                 webrtc_for_connect,
                 webrtc_bridge_stop,
                 allow_tcp_punch,
@@ -1425,6 +1484,8 @@ impl Client {
         interface: impl Interface,
         udp_socket_nat: Option<Arc<UdpSocket>>,
         udp_socket_v6: Option<Arc<UdpSocket>>,
+        udp_candidates: Option<Vec<Arc<UdpSocket>>>,
+        peer_punch_ports: Vec<u16>,
         webrtc_offerer: Option<WebRTCStream>,
         webrtc_bridge_stop: Option<oneshot::Sender<()>>,
         allow_tcp_punch: bool,
@@ -1473,6 +1534,7 @@ impl Client {
             }
         }
         log::info!("peer address: {}, timeout: {}", peer, connect_timeout);
+        interface.connection_log(&format!("Peer {peer}, timeout {connect_timeout} ms"));
         let start = std::time::Instant::now();
 
         // Each attempt carries whether its path is direct (4th field). TCP/UDP/IPv6 punch are
@@ -1488,27 +1550,51 @@ impl Client {
                 .boxed(),
             );
         }
+        let has_candidates = udp_candidates.is_some() && !peer_punch_ports.is_empty();
+        if let Some(sockets) = udp_candidates.filter(|_| has_candidates) {
+            let targets = peer_punch_ports
+                .iter()
+                .map(|port| SocketAddr::new(peer.ip(), *port))
+                .collect::<Vec<_>>();
+            direct_futures.push(
+                async move {
+                    let (conn, kcp, typ) =
+                        udp_candidates_connect(sockets, targets, connect_timeout)
+                            .await
+                            .map_err(|err| {
+                                log::warn!("candidate UDP punch failed: {err}");
+                                err
+                            })?;
+                    Ok((conn, kcp, typ, true))
+                }
+                .boxed(),
+            );
+        }
         if let Some(udp_socket_nat) = udp_socket_nat {
-            if let Some(multiport) = multiport_punch_config(peer) {
-                let socket = udp_socket_nat.clone();
-                direct_futures.push(
-                    async move {
-                        let (conn, kcp, typ) = udp_multiport_connect(
-                            socket,
-                            peer,
-                            "UDP",
-                            connect_timeout,
-                            multiport,
-                        )
-                        .await
-                        .map_err(|err| {
-                            log::warn!("multiport UDP punch failed: {err}");
-                            err
-                        })?;
-                        Ok((conn, kcp, typ, true))
-                    }
-                    .boxed(),
-                );
+            // The candidate race probes the peer's own advertised ports, so the blind sweep has
+            // nothing left to guess.
+            if !has_candidates {
+                if let Some(multiport) = multiport_punch_config(peer) {
+                    let socket = udp_socket_nat.clone();
+                    direct_futures.push(
+                        async move {
+                            let (conn, kcp, typ) = udp_multiport_connect(
+                                socket,
+                                peer,
+                                "UDP",
+                                connect_timeout,
+                                multiport,
+                            )
+                            .await
+                            .map_err(|err| {
+                                log::warn!("multiport UDP punch failed: {err}");
+                                err
+                            })?;
+                            Ok((conn, kcp, typ, true))
+                        }
+                        .boxed(),
+                    );
+                }
             }
             direct_futures.push(
                 async move {
@@ -1601,6 +1687,7 @@ impl Client {
                     interface.update_direct(Some(false));
                     bail!("Failed to connect via relay server: {}", e);
                 }
+                interface.connection_log(&format!("No direct path, relay {relay_server}"));
                 typ = "Relay";
                 direct = false;
             } else {
@@ -1613,6 +1700,11 @@ impl Client {
             start.elapsed(),
             punch_type
         );
+        interface.connection_log(&format!(
+            "Established {typ} in {:.1}s ({punch_type} punch, {})",
+            start.elapsed().as_secs_f64(),
+            if direct { "direct" } else { "relayed" }
+        ));
         let res = Self::secure_connection(peer_id, signed_id_pk.clone(), key, &mut conn).await;
         let pk: Option<Vec<u8>> = match res {
             Ok(pk) => pk,
@@ -4964,6 +5056,9 @@ pub trait Interface: Send + Clone + 'static + Sized {
     /// Send message data to remote peer.
     fn send(&self, data: Data);
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str);
+    /// One connection-establishment line for the UI's connecting screen. Best effort: a UI
+    /// without such a view keeps the default.
+    fn connection_log(&self, _line: &str) {}
     fn handle_login_error(&self, err: &str) -> bool;
     fn handle_peer_info(&self, pi: PeerInfo);
     fn set_multiple_windows_session(&self, sessions: Vec<WindowsSession>);
@@ -5762,6 +5857,38 @@ async fn udp_multiport_connect(
         .await
         .with_context(|| "Failed to connect multiport KCP stream")?;
     Ok((res.1, Some(res.0), typ))
+}
+
+/// Punch from the sockets whose ports were advertised to the peer, against the ports it
+/// advertised back. Both sides know every candidate, so this is a bounded mesh instead of a
+/// sweep, and the socket that answers becomes the transport.
+async fn udp_candidates_connect(
+    sockets: Vec<Arc<UdpSocket>>,
+    targets: Vec<SocketAddr>,
+    ms_timeout: u64,
+) -> ResultType<(Stream, Option<KcpStream>, &'static str)> {
+    let socket_count = sockets.len();
+    let started = Instant::now();
+    let (socket, peer, _, stats) = crate::common::punch_udp_candidates(
+        sockets,
+        targets,
+        false,
+        Duration::from_millis(ms_timeout.max(3000)),
+    )
+    .await?;
+    log::info!(
+        "candidate UDP punch confirmed in {:?}, {} probes sent, {} probes received, {} recv errors, {} sockets",
+        started.elapsed(),
+        stats.probes_sent,
+        stats.probes_seen,
+        stats.recv_errors,
+        socket_count,
+    );
+    socket.connect(peer).await?;
+    let res = KcpStream::connect(socket, Duration::from_millis(ms_timeout))
+        .await
+        .with_context(|| "Failed to connect candidate KCP stream")?;
+    Ok((res.1, Some(res.0), "UDP"))
 }
 
 #[cfg(test)]

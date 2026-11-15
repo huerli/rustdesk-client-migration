@@ -41,6 +41,7 @@ import 'package:vector_math/vector_math.dart' show Vector2;
 import '../common.dart';
 import '../utils/image.dart' as img;
 import '../common/widgets/dialog.dart';
+import '../common/widgets/connection_log.dart';
 import 'input_model.dart';
 import 'platform_model.dart';
 import 'package:flutter_hbb/utils/scale.dart';
@@ -343,6 +344,8 @@ class FfiModel with ChangeNotifier {
         handleSyncPeerInfo(evt, sessionId, peerId);
       } else if (name == 'sync_platform_additions') {
         handlePlatformAdditions(evt, sessionId, peerId);
+      } else if (name == 'connection_log') {
+        parent.target?.connectionLogModel.add(evt['line'] ?? '');
       } else if (name == 'connection_ready') {
         setConnectionType(peerId, evt['secure'] == 'true',
             evt['direct'] == 'true', evt['stream_type'] ?? '');
@@ -1136,8 +1139,11 @@ class FfiModel with ChangeNotifier {
     bind.sessionReconnect(sessionId: sessionId, forceRelay: forceRelay);
     clearPermissions();
     dialogManager.dismissAll();
+    final logModel = parent.target?.connectionLogModel;
+    logModel?.clear();
     dialogManager.showLoading(translate('Connecting...'),
-        onCancel: closeConnection);
+        onCancel: closeConnection,
+        extra: logModel == null ? null : ConnectionLogView(logModel));
   }
 
   Future<void> showRelayHintDialog(
@@ -4064,6 +4070,7 @@ class FFI {
   late final UserModel userModel; // global
   late final PeerTabModel peerTabModel; // global
   late final QualityMonitorModel qualityMonitorModel; // session
+  late final ConnectionLogModel connectionLogModel; // session
   late final RecordingModel recordingModel; // session
   late final InputModel inputModel; // session
   late final ElevationModel elevationModel; // session
@@ -4094,6 +4101,7 @@ class FFI {
     abModel = AbModel(WeakReference(this));
     groupModel = GroupModel(WeakReference(this));
     qualityMonitorModel = QualityMonitorModel(WeakReference(this));
+    connectionLogModel = ConnectionLogModel();
     recordingModel = RecordingModel(WeakReference(this));
     inputModel = InputModel(WeakReference(this));
     elevationModel = ElevationModel(WeakReference(this));
@@ -4141,6 +4149,7 @@ class FFI {
     String loginMethod = '',
   }) {
     closed = false;
+    connectionLogModel.clear();
     if (isMobile) mobileReset();
     assert(
         (!(isPortForward && isViewCamera)) &&

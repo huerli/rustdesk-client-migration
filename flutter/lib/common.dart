@@ -1010,7 +1010,8 @@ class OverlayDialogManager {
       {bool clickMaskDismiss = false,
       bool showCancel = true,
       VoidCallback? onCancel,
-      String? tag}) {
+      String? tag,
+      Widget? extra}) {
     if (tag == null) {
       tag = _tagCount.toString();
       _tagCount++;
@@ -1025,7 +1026,7 @@ class OverlayDialogManager {
 
       return CustomAlertDialog(
         content: Container(
-            constraints: const BoxConstraints(maxWidth: 240),
+            constraints: BoxConstraints(maxWidth: extra == null ? 240 : 500),
             child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1036,6 +1037,10 @@ class OverlayDialogManager {
                   Center(
                       child: Text(translate(text),
                           style: const TextStyle(fontSize: 15))),
+                  if (extra != null) ...[
+                    const SizedBox(height: 14),
+                    Center(child: extra!),
+                  ],
                   const SizedBox(height: 20),
                   Offstage(
                       offstage: !showCancel,

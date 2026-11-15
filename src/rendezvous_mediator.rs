@@ -35,8 +35,9 @@ use base::config::keys::*;
 use crate::{
     check_port,
     common::{
-        bind_multiport_udp_sockets, multiport_punch_config, punch_udp_multiport,
-        MultiportPunchConfig,
+        bind_multiport_udp_sockets, endpoint_punch_ports, endpoint_with_punch_ports,
+        gather_udp_punch_ports, multiport_punch_config, punch_candidate_sockets,
+        punch_candidates_enabled, punch_udp_candidates, punch_udp_multiport, MultiportPunchConfig,
     },
     server::{check_zombie, new as new_server, ConnectionMeta, ServerPtr},
 };
@@ -1203,6 +1204,41 @@ impl RendezvousMediator {
                 )
                 .await;
         }
+        // The controller advertises the ports it punches from; bind one socket per port we
+        // answer with, learn their public ports, and hand the list back in the answer. Relay
+        // requests returned above - a relayed round has no hole to aim at.
+        let mut candidate_sockets: Option<Vec<Arc<tokio::net::UdpSocket>>> = None;
+        let mut controller_punch_ports: Vec<u16> = Vec::new();
+        let mut webrtc_sdp_answer = webrtc_sdp_answer;
+        if !webrtc_sdp_answer.is_empty() && ph.udp_port > 0 && punch_candidates_enabled() {
+            controller_punch_ports = endpoint_punch_ports(&ph.webrtc_sdp_offer);
+            if !controller_punch_ports.is_empty() {
+                if let Ok((probe, server_addr)) = new_direct_udp_for(&self.host).await {
+                    if let Some(local) = probe.local_addr().ok().filter(|addr| addr.is_ipv4()) {
+                        if let Ok(sockets) =
+                            bind_multiport_udp_sockets(punch_candidate_sockets(), local).await
+                        {
+                            let mut ports =
+                                gather_udp_punch_ports(&sockets, server_addr, 800).await;
+                            ports.sort_unstable();
+                            ports.dedup();
+                            if !ports.is_empty() {
+                                if let Some(answer) =
+                                    endpoint_with_punch_ports(&webrtc_sdp_answer, &ports)
+                                {
+                                    webrtc_sdp_answer = answer;
+                                }
+                                log::debug!(
+                                    "advertising {} UDP punch candidates",
+                                    ports.len()
+                                );
+                                candidate_sockets = Some(sockets);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         use hbb_common::protobuf::Enum;
         let nat_type = NatType::from_i32(Config::get_nat_type()).unwrap_or(NatType::UNKNOWN_NAT);
         let msg_punch = PunchHoleSent {
@@ -1217,8 +1253,16 @@ impl RendezvousMediator {
         };
         if ph.udp_port > 0 {
             peer_addr.set_port(ph.udp_port as u16);
-            self.punch_udp_hole(peer_addr, server, msg_punch, meta, slot_udp)
-                .await?;
+            self.punch_udp_hole(
+                peer_addr,
+                server,
+                msg_punch,
+                meta,
+                slot_udp,
+                candidate_sockets,
+                controller_punch_ports,
+            )
+            .await?;
             return Ok(());
         }
         if !ph.webrtc_sdp_offer.is_empty() {
@@ -1275,6 +1319,8 @@ impl RendezvousMediator {
         msg_punch: PunchHoleSent,
         meta: ConnectionMeta,
         slot: Option<PunchSlot>,
+        candidate_sockets: Option<Vec<Arc<tokio::net::UdpSocket>>>,
+        controller_punch_ports: Vec<u16>,
     ) -> ResultType<()> {
         let mut msg_out = Message::new();
         msg_out.set_punch_hole_sent(msg_punch);
@@ -1302,6 +1348,24 @@ impl RendezvousMediator {
                 socket.send_to(&data, addr).await.ok();
             }
         });
+        // When both sides advertised candidates the punch probes known ports instead of a
+        // predicted range, and the sockets are the ones whose ports the controller was told
+        // about. A failure here is clean: the controller keeps its WebRTC and relay attempts.
+        if let Some(sockets) = candidate_sockets.filter(|_| !controller_punch_ports.is_empty()) {
+            let targets = controller_punch_ports
+                .iter()
+                .map(|port| SocketAddr::new(peer_addr.ip(), *port))
+                .collect::<Vec<_>>();
+            return udp_punch_candidates_accept(
+                sockets,
+                targets,
+                peer_addr,
+                server,
+                meta,
+                slot,
+            )
+            .await;
+        }
         udp_nat_listen(
             socket_cloned.clone(),
             peer_addr,
@@ -1632,6 +1696,46 @@ async fn udp_multiport_accept(
     .map_err(Into::into)
 }
 
+/// Candidate punch on the listening side: probe the controller's advertised ports from the
+/// sockets whose ports we advertised back, and hand the first verified pair to KCP.
+async fn udp_punch_candidates_accept(
+    sockets: Vec<Arc<tokio::net::UdpSocket>>,
+    targets: Vec<SocketAddr>,
+    peer_addr_v4: SocketAddr,
+    server: ServerPtr,
+    meta: ConnectionMeta,
+    slot: PunchSlot,
+) -> ResultType<()> {
+    let socket_count = sockets.len();
+    let started = Instant::now();
+    let (socket, peer, init_packet, stats) = punch_udp_candidates(
+        sockets,
+        targets,
+        true,
+        Duration::from_millis(CONNECT_TIMEOUT.max(3000)),
+    )
+    .await?;
+    log::info!(
+        "candidate UDP punch confirmed in {:?}, {} probes sent, {} probes received, {} recv errors, {} sockets",
+        started.elapsed(),
+        stats.probes_sent,
+        stats.probes_seen,
+        stats.recv_errors,
+        socket_count,
+    );
+    socket.connect(peer).await?;
+    let (kcp, stream) = crate::kcp_stream::KcpStream::accept(
+        socket,
+        Duration::from_millis(CONNECT_TIMEOUT as _),
+        init_packet,
+    )
+    .await?;
+    drop(slot);
+    crate::server::create_tcp_connection(server, stream, peer_addr_v4, true, meta).await?;
+    drop(kcp);
+    Ok(())
+}
+
 /// Where the repeats start, and the factor they slow by. The controller's SYN arrives once, at an
 /// instant we are never told, inside a window we are not told either: `Client::connect` sizes its
 /// dial only after our PunchHoleSent, from its own rendezvous time and the direct failures it has
@@ -1922,6 +2026,8 @@ mod tests {
                 msg_punch,
                 connection_meta(None, None),
                 None,
+                None,
+                Vec::new(),
             )
             .await
             .expect("declined is not an error, and not a listen");

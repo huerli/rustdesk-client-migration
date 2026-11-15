@@ -2997,6 +2997,119 @@ pub fn multiport_punch_config(peer: SocketAddr) -> Option<MultiportPunchConfig> 
     })
 }
 
+/// Envelope key carrying the UDP ports this side will punch from. It rides the WebRTC offer and
+/// answer, which already cross the rendezvous server end to end and are ignored field-by-field by
+/// older peers, so the legacy punch gains a candidate list without a protocol change.
+const PUNCH_PORTS_KEY: &str = "punch_ports";
+
+/// Port spraying with a candidate list is opt-out, like the multiport sweep it complements.
+pub fn punch_candidates_enabled() -> bool {
+    env_value::<u8>("RUSTDESK_PUNCH_CANDIDATES")
+        .map(|value| value != 0)
+        .unwrap_or(true)
+}
+
+pub fn punch_candidate_sockets() -> usize {
+    env_value::<usize>("RUSTDESK_PUNCH_CANDIDATE_SOCKETS")
+        .unwrap_or(16)
+        .clamp(2, 32)
+}
+
+/// Add this side's punch ports to a `webrtc://` endpoint envelope. Returns `None` when the
+/// endpoint is not the envelope format this code writes, so callers keep the original.
+pub fn endpoint_with_punch_ports(endpoint: &str, ports: &[u16]) -> Option<String> {
+    let encoded = endpoint.strip_prefix("webrtc://")?;
+    #[allow(deprecated)]
+    let decoded = base64::decode(encoded).ok()?;
+    let mut value: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    let object = value.as_object_mut()?;
+    if ports.is_empty() {
+        object.remove(PUNCH_PORTS_KEY);
+    } else {
+        // A compact string, not a JSON array: this rides in `PunchHole`, which may travel as a
+        // single UDP datagram, so every base64 character of envelope costs 4/3 of a byte there.
+        let list = ports
+            .iter()
+            .map(|port| port.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        object.insert(PUNCH_PORTS_KEY.to_owned(), serde_json::Value::from(list));
+    }
+    #[allow(deprecated)]
+    let encoded = base64::encode(serde_json::to_vec(&value).ok()?);
+    Some(format!("webrtc://{encoded}"))
+}
+
+/// The peer's punch ports from its endpoint envelope; empty when absent or malformed.
+pub fn endpoint_punch_ports(endpoint: &str) -> Vec<u16> {
+    let Some(encoded) = endpoint.strip_prefix("webrtc://") else {
+        return Vec::new();
+    };
+    #[allow(deprecated)]
+    let Ok(decoded) = base64::decode(encoded) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&decoded) else {
+        return Vec::new();
+    };
+    value
+        .get(PUNCH_PORTS_KEY)
+        .and_then(|ports| ports.as_str())
+        .map(|ports| {
+            ports
+                .split(',')
+                .filter_map(|port| port.parse::<u16>().ok())
+                .filter(|port| *port > 0)
+                .take(64)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Learn the public port each of `sockets` got toward the rendezvous server, so the peer can be
+/// handed a list of places to probe instead of a port range guessed from one observed port.
+/// Best effort: a socket whose reply never arrives simply contributes no candidate.
+pub async fn gather_udp_punch_ports(
+    sockets: &[Arc<UdpSocket>],
+    server: SocketAddr,
+    ms_timeout: u64,
+) -> Vec<u16> {
+    let mut futs = Vec::with_capacity(sockets.len());
+    for socket in sockets {
+        let socket = socket.clone();
+        futs.push(async move {
+            let mut msg = RendezvousMessage::new();
+            msg.set_test_nat_request(TestNatRequest::default());
+            let data = msg.write_to_bytes().ok()?;
+            socket.send_to(&data, server).await.ok()?;
+            let deadline = Instant::now() + Duration::from_millis(ms_timeout);
+            let mut buf = [0u8; 1500];
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return None;
+                }
+                let ms = remaining.as_millis().clamp(1, u64::MAX as u128) as u64;
+                let Ok(Ok((n, _))) = timeout(ms, socket.recv_from(&mut buf)).await else {
+                    return None;
+                };
+                let Ok(msg) = RendezvousMessage::parse_from_bytes(&buf[..n]) else {
+                    continue;
+                };
+                if let Some(rendezvous_message::Union::TestNatResponse(tnr)) = msg.union {
+                    if tnr.port > 0 && tnr.port <= u16::MAX as i32 {
+                        return Some(tnr.port as u16);
+                    }
+                }
+            }
+        });
+    }
+    let mut ports: Vec<u16> = join_all(futs).await.into_iter().flatten().collect();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
 pub async fn bind_multiport_udp_sockets(
     count: usize,
     bind_addr: SocketAddr,
@@ -3180,6 +3293,61 @@ pub async fn punch_udp_multiport(
             punch_udp_multiport_socket(
                 socket,
                 peer_base.ip(),
+                targets.clone(),
+                listen,
+                max_time,
+                tid,
+                counters.clone(),
+            )
+            .boxed(),
+        );
+    }
+    let ((socket, peer, init), _) = select_ok(futures).await.map_err(|err| anyhow!("{err}"))?;
+    let stats = MultiportPunchStats {
+        probes_sent: counters.probes_sent.load(Ordering::Relaxed),
+        probes_seen: counters.probes_seen.load(Ordering::Relaxed),
+        recv_errors: counters.recv_errors.load(Ordering::Relaxed),
+    };
+    Ok((socket, peer, init, stats))
+}
+
+/// Multi-candidate punch: the same per-socket probe/ack race as the multiport sweep, but every
+/// socket probes the peer's advertised ports instead of a range predicted from one observed port.
+/// Ports come from the peer's endpoint envelope, so this is both smaller (a probe per pair) and
+/// deterministic where the sweep is a guess.
+pub async fn punch_udp_candidates(
+    sockets: Vec<Arc<UdpSocket>>,
+    targets: Vec<SocketAddr>,
+    listen: bool,
+    max_time: Duration,
+) -> ResultType<(
+    Arc<UdpSocket>,
+    SocketAddr,
+    Option<bytes::BytesMut>,
+    MultiportPunchStats,
+)> {
+    if sockets.is_empty() {
+        bail!("candidate punch has no sockets");
+    }
+    let Some(first) = targets.first() else {
+        bail!("candidate punch has no target ports");
+    };
+    // A peer can hand us any port; the address is pinned by the rendezvous response, never by the
+    // candidate list, so this can only ever probe the peer itself.
+    if targets.iter().any(|target| target.ip() != first.ip()) {
+        bail!("candidate punch targets must share one peer address");
+    }
+    let peer_ip = first.ip();
+    let targets = Arc::new(targets);
+    let counters = Arc::new(MultiportPunchCounters::default());
+    let mut futures = Vec::with_capacity(sockets.len());
+    for socket in sockets.into_iter() {
+        let tid =
+            ((hbb_common::time_based_rand() as u64) << 32) | hbb_common::time_based_rand() as u64;
+        futures.push(
+            punch_udp_multiport_socket(
+                socket,
+                peer_ip,
                 targets.clone(),
                 listen,
                 max_time,
@@ -3979,5 +4147,55 @@ mod tests {
         // `decode_id_pk` is the same blob minus the fingerprint, so the field is invisible to
         // non-WebRTC handshakes.
         assert_eq!(decode_id_pk(&signed, &pk).unwrap(), (id, their_pk));
+    }
+
+    #[test]
+    fn punch_ports_ride_the_webrtc_endpoint_envelope() {
+        let envelope = format!(
+            "webrtc://{}",
+            encode64(json!({"type": "offer", "sdp": "v=0\r\n"}).to_string())
+        );
+        assert!(endpoint_punch_ports(&envelope).is_empty());
+
+        let with_ports = endpoint_with_punch_ports(&envelope, &[1234, 5678]).unwrap();
+        assert_eq!(endpoint_punch_ports(&with_ports), vec![1234, 5678]);
+        // The SDP reader only looks at type/sdp; the added key must leave both untouched.
+        let decoded = decode64(with_ports.strip_prefix("webrtc://").unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
+        assert_eq!(value["sdp"], "v=0\r\n");
+        assert_eq!(value["type"], "offer");
+
+        assert!(endpoint_with_punch_ports("not-webrtc", &[1]).is_none());
+        assert!(endpoint_punch_ports("webrtc://!!!").is_empty());
+    }
+
+    #[tokio::test]
+    async fn candidate_punch_completes_against_an_advertised_port() {
+        let listener = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let listener_addr = listener.local_addr().unwrap();
+        let responder = {
+            let socket = listener.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1500];
+                while let Ok((n, source)) = socket.recv_from(&mut buf).await {
+                    if let Some(tid) = punch_tid(&buf[..n], &PUNCH_PROBE) {
+                        socket
+                            .send_to(&punch_packet(&PUNCH_ACK, tid), source)
+                            .await
+                            .ok();
+                    }
+                }
+            })
+        };
+        let connector = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let res = punch_udp_candidates(
+            vec![connector],
+            vec![listener_addr],
+            false,
+            Duration::from_secs(2),
+        )
+        .await;
+        responder.abort();
+        assert!(res.is_ok(), "candidate punch failed: {:?}", res.err());
     }
 }
