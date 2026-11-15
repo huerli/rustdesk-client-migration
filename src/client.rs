@@ -657,6 +657,22 @@ impl Client {
         }
     }
 
+    /// Upper bound on the direct attempts a single connect() round may spend. The NAT-traversal
+    /// budget can reach tens of seconds (it is the punch time multiplied out), and on a network
+    /// where nothing direct answers that is all spinner: a probe round that has produced no reply
+    /// in seconds will not produce one in twenty. The relay still wins if a direct path does not,
+    /// so capping only changes how long the user waits before it does. Env-tunable for slow links.
+    const DIRECT_RACE_TIMEOUT_MS: u64 = 12_000;
+
+    fn direct_race_timeout(connect_timeout: u64) -> u64 {
+        let cap = std::env::var("RUSTDESK_DIRECT_RACE_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value >= 3000)
+            .unwrap_or(Self::DIRECT_RACE_TIMEOUT_MS);
+        connect_timeout.min(cap)
+    }
+
     /// UDP-NAT-test wait when the TCP clock is implausible (see TCP_RTT_PLAUSIBLE_MIN). The
     /// normal bound is `rtt / 2`: the test has been running since before the TCP connect, so on
     /// a network where TCP RTT ~ UDP RTT its response has already landed. A transparent TCP
@@ -1533,15 +1549,23 @@ impl Client {
                 connect_timeout = MIN;
             }
         }
-        log::info!("peer address: {}, timeout: {}", peer, connect_timeout);
-        interface.connection_log(&format!("Peer {peer}, timeout {connect_timeout} ms"));
+        // A ready relay is not far behind, so the direct legs get one bounded window rather than
+        // the full NAT budget; see DIRECT_RACE_TIMEOUT_MS.
+        let direct_timeout = Self::direct_race_timeout(connect_timeout);
+        log::info!(
+            "peer address: {}, timeout: {} (direct race {})",
+            peer,
+            connect_timeout,
+            direct_timeout
+        );
+        interface.connection_log(&format!("Peer {peer}, timeout {direct_timeout} ms"));
         let start = std::time::Instant::now();
 
         // Each attempt carries whether its path is direct (4th field). TCP/UDP/IPv6 punch are
         // always direct; WebRTC is direct only when ICE nominated a non-TURN pair.
         let mut direct_futures = Vec::new();
         if allow_tcp_punch {
-            let fut = connect_tcp_local(peer, Some(local_addr), connect_timeout);
+            let fut = connect_tcp_local(peer, Some(local_addr), direct_timeout);
             direct_futures.push(
                 async move {
                     let conn = fut.await?;
@@ -1559,7 +1583,7 @@ impl Client {
             direct_futures.push(
                 async move {
                     let (conn, kcp, typ) =
-                        udp_candidates_connect(sockets, targets, connect_timeout)
+                        udp_candidates_connect(sockets, targets, direct_timeout)
                             .await
                             .map_err(|err| {
                                 log::warn!("candidate UDP punch failed: {err}");
@@ -1582,7 +1606,7 @@ impl Client {
                                 socket,
                                 peer,
                                 "UDP",
-                                connect_timeout,
+                                direct_timeout,
                                 multiport,
                             )
                             .await
@@ -1599,7 +1623,7 @@ impl Client {
             direct_futures.push(
                 async move {
                     let (conn, kcp, typ) =
-                        udp_nat_connect(udp_socket_nat, "UDP", connect_timeout).await?;
+                        udp_nat_connect(udp_socket_nat, "UDP", direct_timeout).await?;
                     Ok((conn, kcp, typ, true))
                 }
                 .boxed(),
@@ -1609,7 +1633,7 @@ impl Client {
             direct_futures.push(
                 async move {
                     let (conn, kcp, typ) =
-                        udp_nat_connect(udp_socket_v6, "IPv6", connect_timeout).await?;
+                        udp_nat_connect(udp_socket_v6, "IPv6", direct_timeout).await?;
                     Ok((conn, kcp, typ, true))
                 }
                 .boxed(),
@@ -1627,7 +1651,7 @@ impl Client {
                 // so a viable P2P path is not abandoned before it can complete; TCP/UDP keep the
                 // tighter timeout, so a working direct connection still wins immediately, and the
                 // relay fallback only waits the extra time when direct attempts all failed.
-                let webrtc_timeout = connect_timeout.max(Self::relay_fallback_delay_ms());
+                let webrtc_timeout = direct_timeout.max(Self::relay_fallback_delay_ms());
                 async move {
                     raced.wait_connected(webrtc_timeout).await?;
                     // Resolve the pair here: a TURN win is relayed, not direct, and must be held
@@ -5840,7 +5864,7 @@ async fn udp_multiport_connect(
         sockets,
         peer,
         false,
-        Duration::from_millis(ms_timeout.max(3000)),
+        Duration::from_millis(ms_timeout.clamp(3000, 4000)),
         config,
     )
     .await?;
@@ -5869,11 +5893,13 @@ async fn udp_candidates_connect(
 ) -> ResultType<(Stream, Option<KcpStream>, &'static str)> {
     let socket_count = sockets.len();
     let started = Instant::now();
+    // The probe phase, not the transport: every advertised pair is swept within a round or two,
+    // so a window this wide either answers or never will. KCP below keeps the full timeout.
     let (socket, peer, _, stats) = crate::common::punch_udp_candidates(
         sockets,
         targets,
         false,
-        Duration::from_millis(ms_timeout.max(3000)),
+        Duration::from_millis(ms_timeout.clamp(3000, 4000)),
     )
     .await?;
     log::info!(
