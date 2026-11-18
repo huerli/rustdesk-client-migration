@@ -2330,22 +2330,36 @@ async fn secure_tcp_impl(conn: &mut Stream, key: &str, log_on_success: bool) -> 
     if use_ws() {
         return Ok(());
     }
-    key_exchange(conn, key, log_on_success).await.map(|_| ())
+    key_exchange(conn, key, log_on_success, None)
+        .await
+        .map(|_| ())
 }
 
 /// The server's key exchange on `conn`. `Ok(true)` once the stream is encrypted. `Ok(false)`
 /// when the server sent something else first, nothing parseable, or closed: `secure_tcp`
 /// tolerates that for servers from before the exchange, `secure_tcp_required` does not.
-async fn key_exchange(conn: &mut Stream, key: &str, log_on_success: bool) -> ResultType<bool> {
+async fn key_exchange(
+    conn: &mut Stream,
+    key: &str,
+    log_on_success: bool,
+    offer_timeout: Option<u64>,
+) -> ResultType<bool> {
     let rs_pk = get_rs_pk(key);
-    let Some(rs_pk) = rs_pk else {
+    if offer_timeout.is_none() && rs_pk.is_none() {
         bail!("Handshake failed: invalid public key from rendezvous server");
+    }
+    let first_message = match timeout(offer_timeout.unwrap_or(READ_TIMEOUT), conn.next()).await {
+        Err(_) if offer_timeout.is_some() => return Ok(false),
+        result => result?,
     };
-    match timeout(READ_TIMEOUT, conn.next()).await? {
+    match first_message {
         Some(Ok(bytes)) => {
             if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
                 match msg_in.union {
                     Some(rendezvous_message::Union::KeyExchange(ex)) => {
+                        let rs_pk = rs_pk.context(
+                            "Handshake failed: invalid public key from rendezvous server",
+                        )?;
                         if ex.keys.len() != 1 {
                             bail!("Handshake failed: invalid key exchange message");
                         }
@@ -2409,6 +2423,14 @@ pub async fn secure_tcp(conn: &mut Stream, key: &str) -> ResultType<()> {
     secure_tcp_impl(conn, key, true).await
 }
 
+pub(crate) async fn secure_rendezvous_tcp_if_offered(conn: &mut Stream, key: &str) -> ResultType<()> {
+    if !use_ws() {
+        // Older hbbs versions wait silently for the first request instead of sending an offer.
+        key_exchange(conn, key, true, Some(1000)).await?;
+    }
+    Ok(())
+}
+
 async fn secure_tcp_silent(conn: &mut Stream, key: &str) -> ResultType<()> {
     secure_tcp_impl(conn, key, false).await
 }
@@ -2422,7 +2444,7 @@ pub async fn secure_tcp_required(conn: &mut Stream, key: &str) -> ResultType<()>
     if use_ws() {
         return Ok(());
     }
-    if key_exchange(conn, key, true).await? {
+    if key_exchange(conn, key, true, None).await? {
         Ok(())
     } else {
         bail!("the rendezvous server did not complete the key exchange");
@@ -3911,6 +3933,59 @@ mod tests {
         hbb_common::socket_client::connect_tcp(host.to_owned(), 3000)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn lan_address_reply_works_with_and_without_a_server_key_exchange() {
+        const PEER_ID: &str = "123456789";
+        for offers_exchange in [true, false] {
+            let (key, sk) = server_key();
+            let host = rendezvous_stub(move |mut server| async move {
+                let mut message = RendezvousMessage::new();
+                if offers_exchange {
+                    let (pk, secret) = box_::gen_keypair();
+                    message.set_key_exchange(KeyExchange {
+                        keys: vec![sign::sign(&pk.0, &sk).into()],
+                        ..Default::default()
+                    });
+                    server.send(&message).await.unwrap();
+                    let reply = server.next_timeout(3000).await.unwrap().unwrap();
+                    let reply = RendezvousMessage::parse_from_bytes(&reply).unwrap();
+                    let Some(rendezvous_message::Union::KeyExchange(reply)) = reply.union else {
+                        panic!("the client must answer the key exchange before sending LocalAddr");
+                    };
+                    server.set_key(
+                        hbb_common::tcp::Encrypt::decode(&reply.keys[1], &reply.keys[0], &secret)
+                            .unwrap(),
+                    );
+                }
+                let reply = server.next_timeout(3000).await.unwrap().unwrap();
+                let reply = RendezvousMessage::parse_from_bytes(&reply).unwrap();
+                let Some(rendezvous_message::Union::LocalAddr(reply)) = reply.union else {
+                    panic!("expected the client's LocalAddr");
+                };
+                assert_eq!(reply.id, PEER_ID);
+                message.set_register_peer_response(RegisterPeerResponse::new());
+                server.send(&message).await.unwrap();
+            })
+            .await;
+            let mut client = connect(&host).await;
+            secure_rendezvous_tcp_if_offered(&mut client, &key)
+                .await
+                .unwrap();
+            let mut message = RendezvousMessage::new();
+            message.set_local_addr(hbb_common::rendezvous_proto::LocalAddr {
+                id: PEER_ID.to_owned(),
+                ..Default::default()
+            });
+            client.send_raw(message.write_to_bytes().unwrap()).await.unwrap();
+            let reply = client.next_timeout(3000).await.unwrap().unwrap();
+            let reply = RendezvousMessage::parse_from_bytes(&reply).unwrap();
+            assert!(matches!(
+                reply.union,
+                Some(rendezvous_message::Union::RegisterPeerResponse(_))
+            ));
+        }
     }
 
     #[tokio::test]

@@ -913,6 +913,8 @@ impl Client {
             secure_tcp(&mut socket, &key)
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
+        } else if !exchanged && !interface.is_force_relay() && tcp_punch_allowed() {
+            crate::secure_rendezvous_tcp_if_offered(&mut socket, &key).await?;
         }
         // A token or switch code has always taken this socket straight to the punch without
         // waiting for the UDP NAT test. The WebRTC exchange does not replace that wait, it only

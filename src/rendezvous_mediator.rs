@@ -906,6 +906,7 @@ impl RendezvousMediator {
         // we saw invalid local_addr while using proxy, local_addr.ip() == "::1"
         let local_addr: SocketAddr =
             format!("{}:{}", local_addr.ip(), local_addr.port()).parse()?;
+        crate::secure_rendezvous_tcp_if_offered(&mut socket, &crate::get_key(true).await).await?;
         let mut msg_out = Message::new();
         msg_out.set_local_addr(LocalAddr {
             id: Config::get_id(),
