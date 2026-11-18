@@ -8,9 +8,11 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/input_model.dart';
+import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/desktop/pages/remote_page.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
+import 'package:flutter_hbb/desktop/widgets/session_diagnostics.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/desktop/widgets/material_mod_popup_menu.dart'
     as mod_menu;
@@ -141,6 +143,27 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
           children: [
             _RelativeMouseModeHint(tabController: tabController),
             const AddButton(),
+            Obx(() {
+              final state = tabController.state.value;
+              if (state.selected >= state.tabs.length) {
+                return const SizedBox.shrink();
+              }
+              final page = state.selectedTabInfo.page as RemotePage;
+              final connection = ConnectionTypeState.find(page.id);
+              if (!connection.isValid() || !Get.isRegistered<FFI>(tag: page.id)) {
+                return const SizedBox.shrink();
+              }
+              return SessionDiagnosticsButton(
+                key: ValueKey(page.id),
+                ffi: Get.find<FFI>(tag: page.id),
+                connection: getConnectionText(
+                  connection.secure.value == ConnectionType.strSecure,
+                  connection.direct.value == ConnectionType.strDirect,
+                  connection.stream_type.value,
+                ),
+                connectedDuration: () => page.connectedDuration,
+              );
+            }),
           ],
         ),
         selectedBorderColor: MyTheme.accent,

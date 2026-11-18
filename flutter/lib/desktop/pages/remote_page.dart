@@ -22,6 +22,7 @@ import '../../models/shortcut_model.dart';
 import '../../common/shared_state.dart';
 import '../../utils/image.dart';
 import '../widgets/remote_toolbar.dart';
+import '../widgets/session_diagnostics.dart';
 import '../widgets/kb_layout_type_chooser.dart';
 import '../widgets/tabbar_widget.dart';
 import 'macos_full_screen_focus_recovery.dart';
@@ -68,6 +69,10 @@ class RemotePage extends StatefulWidget {
   final DesktopTabController? tabController;
 
   FFI get ffi => (_lastState.value! as _RemotePageState)._ffi;
+
+  Duration get connectedDuration =>
+      (_lastState.value as _RemotePageState?)?._connectedTime.elapsed ??
+      Duration.zero;
 
   void releaseMacOSInputForTabTransfer() {
     if (!isMacOS) return;
@@ -131,6 +136,7 @@ class _RemotePageState extends State<RemotePage>
   Function(bool)? _onEnterOrLeaveImage4Toolbar;
 
   late FFI _ffi;
+  final _connectedTime = Stopwatch();
   Worker? _waylandKeyboardModeWorker;
   bool _waylandKeyboardModeNormalized = false;
   bool _waylandKeyboardModeNormalizing = false;
@@ -161,6 +167,7 @@ class _RemotePageState extends State<RemotePage>
     }
     Get.put<FFI>(_ffi, tag: widget.id);
     _ffi.imageModel.addCallbackOnFirstImage((String peerId) {
+      if (!isWeb) _connectedTime.start();
       _ffi.canvasModel.activateLocalCursor();
       showKBLayoutTypeChooserIfNeeded(
           _ffi.ffiModel.pi.platform, _ffi.dialogManager);
@@ -1006,14 +1013,16 @@ class _RemotePageState extends State<RemotePage>
                   zoomCursor: _zoomCursor,
                 )));
     }
-    paints.add(
-      Positioned(
-        top: 10,
-        right: 10,
-        child: _buildRawTouchAndPointerRegion(
-            QualityMonitor(_ffi.qualityMonitorModel), null, null),
-      ),
-    );
+    paints.add(isWeb
+        ? Positioned(
+            top: 10,
+            right: 10,
+            child: _buildRawTouchAndPointerRegion(
+                QualityMonitor(_ffi.qualityMonitorModel), null, null),
+          )
+        : Positioned.fill(
+            child: DesktopQualityMonitor(model: _ffi.qualityMonitorModel),
+          ));
     return Stack(
       children: paints,
     );
