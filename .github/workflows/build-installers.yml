@@ -2,11 +2,6 @@ name: Build desktop installers
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/client-migration
-    paths:
-      - .github/workflows/build-installers.yml
 
 permissions:
   contents: write
