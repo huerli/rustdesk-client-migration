@@ -101,6 +101,7 @@ bool allowDisplaySwitchInPrivacyMode(PeerInfo pi, String privacyModeImpl) {
 const _kToolbarOwnedActionIds = <String>[
   kShortcutActionSendCtrlAltDel,
   kShortcutActionRestartRemote,
+  kShortcutActionShutdownRemote,
   kShortcutActionInsertLock,
   kShortcutActionToggleBlockInput,
   kShortcutActionSwitchSides,
@@ -662,6 +663,20 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
           onPressed: () =>
               showRestartRemoteDevice(pi, id, sessionId, ffi.dialogManager),
           actionId: kShortcutActionRestartRemote),
+    );
+  }
+  // shutdown
+  if (isDefaultConn &&
+      perms['shutdown'] != false &&
+      (pi.platform == kPeerPlatformLinux ||
+          pi.platform == kPeerPlatformWindows ||
+          pi.platform == kPeerPlatformMacOS)) {
+    v.add(
+      TTextMenu(
+          child: Text(translate('Shutdown remote device')),
+          onPressed: () =>
+              showShutdownRemoteDevice(pi, id, sessionId, ffi.dialogManager),
+          actionId: kShortcutActionShutdownRemote),
     );
   }
   // insertLock

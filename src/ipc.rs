@@ -356,6 +356,8 @@ pub enum Data {
         file: bool,
         file_transfer_enabled: bool,
         restart: bool,
+        #[serde(default)]
+        shutdown: bool,
         recording: bool,
         block_input: bool,
         privacy_mode: bool,
@@ -423,6 +425,8 @@ pub enum Data {
     CloseVoiceCall(String),
     #[cfg(windows)]
     SyncWinCpuUsage(Option<f64>),
+    #[cfg(target_os = "linux")]
+    RemotePowerAction(bool),
     FileTransferLog((String, String)),
     #[cfg(windows)]
     ControlledSessionCount(usize),
@@ -663,7 +667,14 @@ pub(crate) async fn start_with_listener(postfix: &str, mut incoming: Incoming) {
                                     // uinput IPC paths while still minimizing exposed message surface here.
                                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                                     if postfix == crate::POSTFIX_SERVICE {
-                                        if matches!(&data, Data::SyncConfig(_)) {
+                                        #[cfg(target_os = "linux")]
+                                        let allowed = matches!(
+                                            &data,
+                                            Data::SyncConfig(_) | Data::RemotePowerAction(_)
+                                        );
+                                        #[cfg(target_os = "macos")]
+                                        let allowed = matches!(&data, Data::SyncConfig(_));
+                                        if allowed {
                                             handle(data, &mut stream).await;
                                         } else {
                                             log::warn!(
@@ -1150,6 +1161,41 @@ async fn handle(data: Data, stream: &mut Connection) {
                     .send(&Data::SyncConfig(Some((Config::get(), config2).into())))
                     .await
             );
+        }
+        #[cfg(target_os = "linux")]
+        Data::RemotePowerAction(is_reboot) => {
+            let option = if is_reboot {
+                base::config::keys::OPTION_ENABLE_REMOTE_RESTART
+            } else {
+                base::config::keys::OPTION_ENABLE_REMOTE_SHUTDOWN
+            };
+            if !crate::server::Connection::is_permission_enabled_locally(option) {
+                log::warn!(
+                    "Rejected RemotePowerAction(is_reboot={is_reboot}): disabled by local config"
+                );
+                return;
+            }
+            if is_reboot {
+                match system_shutdown::reboot() {
+                    Ok(_) => log::info!("Restart by the peer via root service"),
+                    Err(e) => {
+                        log::warn!("Root service reboot() failed: {e}, trying force_reboot()");
+                        if let Err(e2) = system_shutdown::force_reboot() {
+                            log::error!("Root service force_reboot() failed: {e2}");
+                        }
+                    }
+                }
+            } else {
+                match system_shutdown::shutdown() {
+                    Ok(_) => log::info!("Shutdown by the peer via root service"),
+                    Err(e) => {
+                        log::warn!("Root service shutdown() failed: {e}, trying force_shutdown()");
+                        if let Err(e2) = system_shutdown::force_shutdown() {
+                            log::error!("Root service force_shutdown() failed: {e2}");
+                        }
+                    }
+                }
+            }
         }
         #[cfg(windows)]
         Data::SyncWinCpuUsage(None) => {

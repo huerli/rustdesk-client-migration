@@ -143,6 +143,7 @@ pub struct Client {
     pub audio: bool,
     pub file: bool,
     pub restart: bool,
+    pub shutdown: bool,
     pub recording: bool,
     pub block_input: bool,
     pub privacy_mode: bool,
@@ -231,6 +232,7 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
         audio: bool,
         file: bool,
         restart: bool,
+        shutdown: bool,
         recording: bool,
         block_input: bool,
         privacy_mode: bool,
@@ -253,6 +255,7 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
             audio,
             file,
             restart,
+            shutdown,
             recording,
             block_input,
             privacy_mode,
@@ -554,9 +557,9 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                         }
                         Ok(Some(data)) => {
                             match data {
-                                Data::Login{id, is_file_transfer, is_view_camera, is_terminal, port_forward, peer_id, name, avatar, authorized, keyboard, clipboard, audio, file, file_transfer_enabled: _file_transfer_enabled, restart, recording, block_input, privacy_mode, from_switch} => {
+                                Data::Login{id, is_file_transfer, is_view_camera, is_terminal, port_forward, peer_id, name, avatar, authorized, keyboard, clipboard, audio, file, file_transfer_enabled: _file_transfer_enabled, restart, shutdown, recording, block_input, privacy_mode, from_switch} => {
                                     log::debug!("conn_id: {}", id);
-                                    self.cm.add_connection(id, is_file_transfer, is_view_camera, is_terminal, port_forward, peer_id, name, avatar, authorized, keyboard, clipboard, audio, file, restart, recording, block_input, privacy_mode, from_switch, self.tx.clone());
+                                    self.cm.add_connection(id, is_file_transfer, is_view_camera, is_terminal, port_forward, peer_id, name, avatar, authorized, keyboard, clipboard, audio, file, restart, shutdown, recording, block_input, privacy_mode, from_switch, self.tx.clone());
                                     self.conn_id = id;
                                     #[cfg(target_os = "windows")]
                                     {
@@ -904,6 +907,7 @@ pub async fn start_listen<T: InvokeUiCM>(
                 audio,
                 file,
                 restart,
+                shutdown,
                 recording,
                 block_input,
                 privacy_mode,
@@ -926,6 +930,7 @@ pub async fn start_listen<T: InvokeUiCM>(
                     audio,
                     file,
                     restart,
+                    shutdown,
                     recording,
                     block_input,
                     privacy_mode,

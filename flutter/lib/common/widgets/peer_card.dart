@@ -613,6 +613,24 @@ abstract class BasePeerCard extends StatelessWidget {
     if (isWindows && peer.platform == kPeerPlatformWindows) {
       menuItems.add(_rdpAction(context, peer.id));
     }
+    if (peer.platform.isEmpty ||
+        peer.platform == kPeerPlatformLinux ||
+        peer.platform == kPeerPlatformWindows ||
+        peer.platform == kPeerPlatformMacOS) {
+      menuItems.add(MenuEntryDivider<String>());
+      menuItems.add(_powerAction(
+        context,
+        title: 'Restart remote device',
+        prompt: 'Are you sure you want to restart',
+        powerAction: 'restart',
+      ));
+      menuItems.add(_powerAction(
+        context,
+        title: 'Shutdown remote device',
+        prompt: 'Are you sure you want to shutdown',
+        powerAction: 'shutdown',
+      ));
+    }
     menuItems.add(MenuEntryDivider<String>());
     menuItems.add(_requestApprovalAction(context));
     // menuItems.add(await _openNewConnInOptAction(peer.id));
@@ -789,6 +807,55 @@ abstract class BasePeerCard extends StatelessWidget {
           )),
       proc: () {
         connectInPeerTab(context, peer, tab, isRDP: true);
+      },
+      padding: menuPadding,
+      dismissOnClicked: true,
+    );
+  }
+
+  MenuEntryBase<String> _powerAction(
+    BuildContext context, {
+    required String title,
+    required String prompt,
+    required String powerAction,
+  }) {
+    return MenuEntryButton<String>(
+      childBuilder: (TextStyle? style) => Text(
+        translate(title),
+        style: style,
+      ),
+      proc: () async {
+        final confirmed = await showConfirmRemotePowerAction(
+          title: title,
+          prompt: prompt,
+          username: peer.username,
+          hostname: peer.hostname,
+          id: peer.id,
+          dialogManager: gFFI.dialogManager,
+        );
+        if (confirmed == true) {
+          var password = '';
+          var isSharedPassword = false;
+          if (tab == PeerTabIndex.ab && !gFFI.abModel.current.isPersonal()) {
+            if (peer.password.isNotEmpty) {
+              password = peer.password;
+              isSharedPassword = true;
+            } else {
+              final abPassword = gFFI.abModel.getdefaultSharedPassword();
+              if (abPassword != null) {
+                password = abPassword;
+                isSharedPassword = true;
+              }
+            }
+          }
+          await runHeadlessRemotePowerAction(
+            id: peer.id,
+            powerAction: powerAction,
+            dialogManager: gFFI.dialogManager,
+            password: password,
+            isSharedPassword: isSharedPassword,
+          );
+        }
       },
       padding: menuPadding,
       dismissOnClicked: true,

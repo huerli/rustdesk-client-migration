@@ -2333,6 +2333,9 @@ impl<T: InvokeUiSession> Remote<T> {
                             Ok(Permission::Restart) => {
                                 self.handler.set_permission("restart", p.enabled);
                             }
+                            Ok(Permission::Shutdown) => {
+                                self.handler.set_permission("shutdown", p.enabled);
+                            }
                             Ok(Permission::Recording) => {
                                 self.handler.lc.write().unwrap().record_permission = p.enabled;
                                 self.update_record_state();

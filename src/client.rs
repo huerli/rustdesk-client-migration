@@ -4075,6 +4075,14 @@ impl LoginConfigHandler {
         msg_out
     }
 
+    pub fn shutdown_remote_device(&self) -> Message {
+        let mut misc = Misc::new();
+        misc.set_shutdown_remote_device(true);
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        msg_out
+    }
+
     pub fn mark_restarting_remote_device(&mut self) {
         self.restarting_remote_device = true;
         self.restart_remote_device_at = Some(Instant::now());
@@ -6321,5 +6329,22 @@ mod kx_tests {
         let (seen, decrypted) = handshake(KX_VERSION_LATEST, Some(0)).await;
         assert_eq!(seen.picked, 1);
         assert!(!seen.decrypted && !decrypted);
+    }
+}
+
+#[cfg(test)]
+mod shutdown_remote_device_tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_remote_device_builds_misc_message_without_restart_state() {
+        let lc = LoginConfigHandler::default();
+        let msg = lc.shutdown_remote_device();
+        assert!(matches!(
+            msg.union,
+            Some(message::Union::Misc(misc))
+                if matches!(misc.union, Some(misc::Union::ShutdownRemoteDevice(true)))
+        ));
+        assert!(!lc.is_restarting_remote_device());
     }
 }

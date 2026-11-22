@@ -124,6 +124,7 @@ const String kTerminalClipboardWriteAllowed = "Y";
 const String kTerminalClipboardWriteDenied = "N";
 const String kOptionEnableTunnel = "enable-tunnel";
 const String kOptionEnableRemoteRestart = "enable-remote-restart";
+const String kOptionEnableRemoteShutdown = "enable-remote-shutdown";
 const String kOptionEnableBlockInput = "enable-block-input";
 const String kOptionEnablePrivacyMode = "enable-privacy-mode";
 const String kOptionEnablePermChangeInAcceptWindow =

@@ -836,5 +836,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Online", "線上"),
         ("Offline", "離線"),
         ("Open panel", "開啟面板"),
+        ("Enable remote shutdown", "啟用遠端關機"),
+        ("Shutdown remote device", "關閉遠端裝置"),
+        ("Are you sure you want to shutdown", "您確定要關機嗎？"),
     ].iter().cloned().collect();
 }

@@ -3,6 +3,7 @@
   "switch_tab_next",
   "switch_tab_prev",
   "restart_remote",
+  "shutdown_remote",
   "switch_sides",
   "toggle_chat"
 ]

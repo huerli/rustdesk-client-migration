@@ -31,6 +31,7 @@ pub mod action_id {
     pub const CLOSE_TAB: &str            = "close_tab";
     pub const TOGGLE_TOOLBAR: &str       = "toggle_toolbar";
     pub const RESTART_REMOTE: &str       = "restart_remote";
+    pub const SHUTDOWN_REMOTE: &str      = "shutdown_remote";
     pub const RESET_CANVAS: &str         = "reset_canvas";
     pub const TOGGLE_MUTE: &str          = "toggle_mute";
     pub const PIN_TOOLBAR: &str          = "pin_toolbar";
@@ -390,6 +391,7 @@ const RELEASE_ACTION_IDS: &[&str] = &[
     action_id::SWITCH_TAB_NEXT,
     action_id::SWITCH_TAB_PREV,
     action_id::RESTART_REMOTE,
+    action_id::SHUTDOWN_REMOTE,
     action_id::SWITCH_SIDES,
     action_id::TOGGLE_CHAT,
 ];

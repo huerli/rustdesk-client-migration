@@ -13,6 +13,9 @@ import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:uuid/uuid.dart';
+import 'package:flutter_hbb/generated_bridge.dart'
+    if (dart.library.html) 'package:flutter_hbb/web/bridge.dart';
 import 'package:flutter_hbb/utils/http_service.dart' as http;
 
 import '../../common.dart';
@@ -1441,6 +1444,293 @@ void showRestartRemoteDevice(PeerInfo pi, String id, SessionID sessionId,
             onSubmit: () => close(true),
           ));
   if (res == true) bind.sessionRestartRemoteDevice(sessionId: sessionId);
+}
+
+void showShutdownRemoteDevice(PeerInfo pi, String id, SessionID sessionId,
+    OverlayDialogManager dialogManager) async {
+  final res = await dialogManager
+      .show<bool>((setState, close, context) => CustomAlertDialog(
+            title: Row(children: [
+              Icon(Icons.warning_rounded, color: Colors.redAccent, size: 28),
+              Flexible(
+                  child: Text(translate("Shutdown remote device"))
+                      .paddingOnly(left: 10)),
+            ]),
+            content: Text(
+                "${translate('Are you sure you want to shutdown')} \n${pi.username}@${pi.hostname}($id) ?"),
+            actions: [
+              dialogButton(
+                "Cancel",
+                icon: Icon(Icons.close_rounded),
+                onPressed: close,
+                isOutline: true,
+              ),
+              dialogButton(
+                "OK",
+                icon: Icon(Icons.done_rounded),
+                onPressed: () => close(true),
+              ),
+            ],
+            onCancel: close,
+            onSubmit: () => close(true),
+          ));
+  if (res == true) bind.sessionShutdownRemoteDevice(sessionId: sessionId);
+}
+
+Future<bool?> showConfirmRemotePowerAction({
+  required String title,
+  required String prompt,
+  required String username,
+  required String hostname,
+  required String id,
+  required OverlayDialogManager dialogManager,
+}) {
+  final target = (username.isNotEmpty || hostname.isNotEmpty)
+      ? '$username@$hostname($id)'
+      : id;
+  return dialogManager
+      .show<bool>((setState, close, context) => CustomAlertDialog(
+            title: Row(children: [
+              Icon(Icons.warning_rounded, color: Colors.redAccent, size: 28),
+              Flexible(child: Text(translate(title)).paddingOnly(left: 10)),
+            ]),
+            content: Text("${translate(prompt)} \n$target ?"),
+            actions: [
+              dialogButton(
+                "Cancel",
+                icon: Icon(Icons.close_rounded),
+                onPressed: close,
+                isOutline: true,
+              ),
+              dialogButton(
+                "OK",
+                icon: Icon(Icons.done_rounded),
+                onPressed: () => close(true),
+              ),
+            ],
+            onCancel: close,
+            onSubmit: () => close(true),
+          ));
+}
+
+Future<void> runHeadlessRemotePowerAction({
+  required String id,
+  required String powerAction,
+  required OverlayDialogManager dialogManager,
+  String password = '',
+  bool isSharedPassword = false,
+}) async {
+  id = id.replaceAll(' ', '');
+  if (id.isEmpty) return;
+  final oldId = id;
+  id = await bind.mainHandleRelayId(id: id);
+  final forceRelay = id != oldId;
+
+  final sessionId = Uuid().v4obj();
+  final addRes = bind.sessionAddSync(
+    sessionId: sessionId,
+    id: id,
+    isFileTransfer: false,
+    isViewCamera: false,
+    isPortForward: false,
+    isRdp: false,
+    isTerminal: false,
+    switchUuid: '',
+    forceRelay: forceRelay,
+    password: password,
+    isSharedPassword: isSharedPassword,
+    connToken: null,
+    loginMethod: '',
+  );
+  if (addRes.isNotEmpty) {
+    showToast(addRes);
+    return;
+  }
+
+  final perms = <String, bool>{};
+  var done = false;
+  var actionSent = false;
+  StreamSubscription<EventToUI>? sub;
+
+  void cleanup({bool dismissDialog = true}) {
+    if (done) return;
+    done = true;
+    sub?.cancel();
+    unawaited(bind.sessionClose(sessionId: sessionId));
+    if (dismissDialog) {
+      dialogManager.dismissAll();
+    }
+  }
+
+  void showPasswordPrompt() async {
+    final controller = TextEditingController();
+    var remember =
+        await bind.sessionGetRemember(sessionId: sessionId) ?? false;
+    if (done) return;
+    dialogManager.dismissAll();
+    dialogManager.show((setState, close, context) {
+      void cancel() {
+        close();
+        cleanup();
+      }
+
+      void submit() {
+        final pw = controller.text.trim();
+        if (pw.isEmpty) return;
+        gFFI.login('', '', sessionId, pw, remember);
+        close();
+        dialogManager.showLoading(translate('Connecting...'),
+            onCancel: cleanup);
+      }
+
+      return CustomAlertDialog(
+        title: Text(translate('Password Required')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              decoration: InputDecoration(labelText: translate('Password')),
+              onSubmitted: (_) => submit(),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: Text(translate('Remember password')),
+              value: remember,
+              onChanged: (v) {
+                remember = v ?? false;
+                setState(() {});
+              },
+            ),
+          ],
+        ),
+        actions: [
+          dialogButton('Cancel', onPressed: cancel, isOutline: true),
+          dialogButton('OK', onPressed: submit),
+        ],
+        onCancel: cancel,
+        onSubmit: submit,
+      );
+    });
+  }
+
+  dialogManager.showLoading(translate('Connecting...'), onCancel: cleanup);
+
+  final stream = bind.sessionStart(sessionId: sessionId, id: id);
+  sub = stream.listen(
+    (message) async {
+      if (done || message is! EventToUI_Event) return;
+      if (message.field0 == 'close') {
+        cleanup();
+        return;
+      }
+      Map<String, dynamic>? evt;
+      try {
+        evt = json.decode(message.field0);
+      } catch (_) {
+        return;
+      }
+      if (evt == null) return;
+      final name = evt['name'];
+      if (name == 'permission') {
+        evt.forEach((k, v) {
+          if (k == 'name' || k.isEmpty) return;
+          perms[k] = v == 'true';
+        });
+      } else if (name == 'peer_info') {
+        final platform = evt['platform'];
+        final supported = platform == kPeerPlatformLinux ||
+            platform == kPeerPlatformWindows ||
+            platform == kPeerPlatformMacOS;
+        final permKey = powerAction == 'restart' ? 'restart' : 'shutdown';
+        if (supported && perms[permKey] != false) {
+          actionSent = true;
+          if (powerAction == 'restart') {
+            await bind.sessionRestartRemoteDevice(sessionId: sessionId);
+          } else {
+            await bind.sessionShutdownRemoteDevice(sessionId: sessionId);
+          }
+          await Future.delayed(const Duration(milliseconds: 500));
+          cleanup();
+          showToast(translate('Successful'));
+        } else {
+          cleanup();
+          showToast(translate('Peer denied'));
+        }
+      } else if (name == 'msgbox') {
+        if (actionSent) return;
+        final type = evt['type'] ?? 'error';
+        final title = evt['title'] ?? '';
+        final text = evt['text'] ?? '';
+        if (text == kMsgboxTextWaitingForImage ||
+            type == 'restarting' ||
+            type == 'restarting-show') {
+          return;
+        }
+        if (type == 'input-password') {
+          showPasswordPrompt();
+        } else if (type == 're-input-password') {
+          dialogManager.dismissAll();
+          dialogManager.show((setState, close, context) {
+            void cancel() {
+              close();
+              cleanup();
+            }
+
+            void retry() {
+              close();
+              showPasswordPrompt();
+            }
+
+            return CustomAlertDialog(
+              title: null,
+              content: msgboxContent(type, title, text),
+              actions: [
+                dialogButton('Cancel', onPressed: cancel, isOutline: true),
+                dialogButton('Retry', onPressed: retry),
+              ],
+              onCancel: cancel,
+              onSubmit: retry,
+            );
+          });
+        } else if (type == 'wait-remote-accept-nook') {
+          dialogManager.dismissAll();
+          dialogManager.show((setState, close, context) {
+            void cancel() {
+              close();
+              cleanup();
+            }
+
+            return CustomAlertDialog(
+              title: null,
+              content: msgboxContent(type, title, text),
+              actions: [
+                dialogButton('Cancel', onPressed: cancel, isOutline: true),
+              ],
+              onCancel: cancel,
+            );
+          });
+        } else {
+          cleanup();
+          dialogManager.show((setState, close, context) => CustomAlertDialog(
+                title: null,
+                content: msgboxContent(type, title, text),
+                actions: [
+                  dialogButton('OK', onPressed: close),
+                ],
+                onCancel: close,
+                onSubmit: close,
+              ));
+        }
+      }
+    },
+    onError: (_) => cleanup(),
+    onDone: () => cleanup(),
+  );
 }
 
 showSetOSPassword(

@@ -807,6 +807,21 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                         canModify: canModifyPermission,
                       ),
                       buildPermissionIcon(
+                        client.shutdown,
+                        Icons.power_settings_new_rounded,
+                        (enabled) {
+                          bind.cmSwitchPermission(
+                              connId: client.id,
+                              name: "shutdown",
+                              enabled: enabled);
+                          setState(() {
+                            client.shutdown = enabled;
+                          });
+                        },
+                        translate('Enable remote shutdown'),
+                        canModify: canModifyPermission,
+                      ),
+                      buildPermissionIcon(
                         client.recording,
                         Icons.videocam_rounded,
                         (enabled) {

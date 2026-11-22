@@ -45,6 +45,7 @@ pub const OPTION_TERMINAL_PERSISTENT: &str = "terminal-persistent";
 pub const OPTION_ENABLE_AUDIO: &str = "enable-audio";
 pub const OPTION_ENABLE_TUNNEL: &str = "enable-tunnel";
 pub const OPTION_ENABLE_REMOTE_RESTART: &str = "enable-remote-restart";
+pub const OPTION_ENABLE_REMOTE_SHUTDOWN: &str = "enable-remote-shutdown";
 pub const OPTION_ENABLE_RECORD_SESSION: &str = "enable-record-session";
 pub const OPTION_ENABLE_BLOCK_INPUT: &str = "enable-block-input";
 pub const OPTION_ENABLE_PRIVACY_MODE: &str = "enable-privacy-mode";
@@ -283,6 +284,7 @@ pub const KEYS_SETTINGS: &[&str] = &[
     OPTION_ENABLE_AUDIO,
     OPTION_ENABLE_TUNNEL,
     OPTION_ENABLE_REMOTE_RESTART,
+    OPTION_ENABLE_REMOTE_SHUTDOWN,
     OPTION_ENABLE_RECORD_SESSION,
     OPTION_ENABLE_BLOCK_INPUT,
     OPTION_ENABLE_PRIVACY_MODE,

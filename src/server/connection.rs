@@ -382,6 +382,7 @@ pub struct Connection {
     audio: bool,
     file: bool,
     restart: bool,
+    shutdown: bool,
     recording: bool,
     block_input: bool,
     privacy_mode: bool,
@@ -597,6 +598,7 @@ impl Connection {
             // to-do: make sure is the option correct here
             file: Self::permission(keys::OPTION_ENABLE_FILE_TRANSFER, &control_permissions),
             restart: Self::permission(keys::OPTION_ENABLE_REMOTE_RESTART, &control_permissions),
+            shutdown: Self::permission(keys::OPTION_ENABLE_REMOTE_SHUTDOWN, &control_permissions),
             recording: Self::permission(keys::OPTION_ENABLE_RECORD_SESSION, &control_permissions),
             block_input: Self::permission(keys::OPTION_ENABLE_BLOCK_INPUT, &control_permissions),
             privacy_mode: Self::permission(keys::OPTION_ENABLE_PRIVACY_MODE, &control_permissions),
@@ -690,6 +692,9 @@ impl Connection {
         }
         if !conn.restart {
             conn.send_permission(Permission::Restart, false).await;
+        }
+        if !conn.shutdown {
+            conn.send_permission(Permission::Shutdown, false).await;
         }
         if !conn.recording {
             conn.send_permission(Permission::Recording, false).await;
@@ -863,6 +868,9 @@ impl Connection {
                             } else if &name == "restart" {
                                 conn.restart = enabled;
                                 conn.send_permission(Permission::Restart, enabled).await;
+                            } else if &name == "shutdown" {
+                                conn.shutdown = enabled;
+                                conn.send_permission(Permission::Shutdown, enabled).await;
                             } else if &name == "recording" {
                                 conn.recording = enabled;
                                 conn.send_permission(Permission::Recording, enabled).await;
@@ -2389,6 +2397,7 @@ impl Connection {
             file: self.file,
             file_transfer_enabled: self.file,
             restart: self.restart,
+            shutdown: self.shutdown,
             recording: self.recording,
             block_input: self.block_input,
             privacy_mode: self.privacy_mode,
@@ -2690,6 +2699,32 @@ impl Connection {
             }
         }
         false
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn execute_linux_power_action(is_reboot: bool) {
+        let action = if is_reboot { "restart" } else { "shutdown" };
+        let direct_ok = if is_reboot {
+            system_shutdown::force_reboot().is_ok() || system_shutdown::reboot().is_ok()
+        } else {
+            system_shutdown::force_shutdown().is_ok() || system_shutdown::shutdown().is_ok()
+        };
+        if direct_ok {
+            log::info!("Remote {action} by the peer");
+            return;
+        }
+        match ipc::connect_service(1000).await {
+            Ok(mut conn) => {
+                if let Err(e) = conn.send(&ipc::Data::RemotePowerAction(is_reboot)).await {
+                    log::error!("Failed to send remote {action} to root service: {e}");
+                } else {
+                    log::info!("Delegated remote {action} to root service");
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to {action} directly or via root service: {e}");
+            }
+        }
     }
 
     #[inline]
@@ -3956,16 +3991,36 @@ impl Connection {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         if self.restart {
                             // force_reboot, not work on linux vm and macos 14
-                            #[cfg(any(target_os = "linux", target_os = "windows"))]
+                            #[cfg(target_os = "windows")]
                             match system_shutdown::force_reboot() {
                                 Ok(_) => log::info!("Restart by the peer"),
                                 Err(e) => log::error!("Failed to restart: {}", e),
                             }
-                            #[cfg(any(target_os = "linux", target_os = "macos"))]
+                            #[cfg(target_os = "macos")]
                             match system_shutdown::reboot() {
                                 Ok(_) => log::info!("Restart by the peer"),
                                 Err(e) => log::error!("Failed to restart: {}", e),
                             }
+                            #[cfg(target_os = "linux")]
+                            Self::execute_linux_power_action(true).await;
+                        }
+                    }
+                    Some(misc::Union::ShutdownRemoteDevice(_)) => {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if self.shutdown {
+                            // force_shutdown, not work on linux vm and macos 14
+                            #[cfg(target_os = "windows")]
+                            match system_shutdown::force_shutdown() {
+                                Ok(_) => log::info!("Shutdown by the peer"),
+                                Err(e) => log::error!("Failed to shutdown: {}", e),
+                            }
+                            #[cfg(target_os = "macos")]
+                            match system_shutdown::shutdown() {
+                                Ok(_) => log::info!("Shutdown by the peer"),
+                                Err(e) => log::error!("Failed to shutdown: {}", e),
+                            }
+                            #[cfg(target_os = "linux")]
+                            Self::execute_linux_power_action(false).await;
                         }
                     }
                     #[cfg(windows)]

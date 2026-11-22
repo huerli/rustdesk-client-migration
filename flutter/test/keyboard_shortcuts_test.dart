@@ -250,6 +250,7 @@ void main() {
     expect(ids, contains(kShortcutActionSendCtrlAltDel));
     expect(ids, contains(kShortcutActionInsertLock));
     expect(ids, contains(kShortcutActionRestartRemote));
+    expect(ids, contains(kShortcutActionShutdownRemote));
     expect(ids, contains(kShortcutActionSwitchDisplayNext));
     expect(ids, contains(kShortcutActionToggleRecording));
     expect(ids, contains(kShortcutActionResetCanvas));

@@ -14,6 +14,7 @@ const kShortcutActionSwitchSides = 'switch_sides';
 const kShortcutActionCloseTab = 'close_tab';
 const kShortcutActionToggleToolbar = 'toggle_toolbar';
 const kShortcutActionRestartRemote = 'restart_remote';
+const kShortcutActionShutdownRemote = 'shutdown_remote';
 const kShortcutActionResetCanvas = 'reset_canvas';
 const kShortcutActionSwitchTabNext = 'switch_tab_next';
 const kShortcutActionSwitchTabPrev = 'switch_tab_prev';
@@ -30,6 +31,7 @@ const kShortcutActionsRunOnKeyUp = {
   kShortcutActionSwitchTabNext,
   kShortcutActionSwitchTabPrev,
   kShortcutActionRestartRemote,
+  kShortcutActionShutdownRemote,
   kShortcutActionSwitchSides,
   kShortcutActionToggleChat,
 };

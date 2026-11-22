@@ -327,6 +327,23 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       ));
     }
 
+    if (perms['shutdown'] != false &&
+        (pi.platform == kPeerPlatformLinux ||
+            pi.platform == kPeerPlatformWindows ||
+            pi.platform == kPeerPlatformMacOS)) {
+      menu.add(MenuEntryButton<String>(
+        childBuilder: (TextStyle? style) => Text(
+          translate('Shutdown remote device'),
+          style: style,
+        ),
+        proc: () => showShutdownRemoteDevice(
+            pi, peerId ?? '', sessionId, ffi.dialogManager),
+        padding: padding,
+        dismissOnClicked: true,
+        dismissCallback: cancelFunc,
+      ));
+    }
+
     if (perms['keyboard'] != false && !ffi.ffiModel.viewOnly) {
       menu.add(RemoteMenuEntry.insertLock(sessionId, padding,
           dismissFunc: cancelFunc));

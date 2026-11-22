@@ -61,6 +61,8 @@ final List<KeyboardShortcutActionGroup> kKeyboardShortcutActionGroups = [
         kShortcutActionSendCtrlAltDel, 'Insert Ctrl + Alt + Del'),
     KeyboardShortcutActionEntry(
         kShortcutActionRestartRemote, 'Restart remote device'),
+    KeyboardShortcutActionEntry(
+        kShortcutActionShutdownRemote, 'Shutdown remote device'),
     KeyboardShortcutActionEntry(kShortcutActionInsertLock, 'Insert Lock'),
     KeyboardShortcutActionEntry(
         kShortcutActionToggleBlockInput, 'Block user input'),
