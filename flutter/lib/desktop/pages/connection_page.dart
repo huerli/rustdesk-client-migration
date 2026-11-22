@@ -2,9 +2,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/connection_page_title.dart';
@@ -111,37 +109,25 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
           ),
         );
 
-    final statusColor = _svcStopped.value ||
-            stateGlobal.svcStatus.value == SvcStatus.connecting
-        ? kColorWarn
-        : (stateGlobal.svcStatus.value == SvcStatus.ready
-            ? Color.fromARGB(255, 50, 190, 166)
-            : Color.fromARGB(255, 224, 79, 95));
-
     basicWidget() => Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              height: 8,
+              width: 8,
               decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(4),
+                color: _svcStopped.value ||
+                        stateGlobal.svcStatus.value == SvcStatus.connecting
+                    ? kColorWarn
+                    : (stateGlobal.svcStatus.value == SvcStatus.ready
+                        ? Color.fromARGB(255, 50, 190, 166)
+                        : Color.fromARGB(255, 224, 79, 95)),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    height: 8,
-                    width: 8,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      color: statusColor,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _buildConnStatusMsg(),
-                ],
-              ),
+            ).marginSymmetric(horizontal: em),
+            Container(
+              width: isIncomingOnly ? 226 : null,
+              child: _buildConnStatusMsg(),
             ),
             // stop
             if (!isIncomingOnly) startServiceWidget(),
@@ -201,139 +187,9 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   }
 }
 
-class _HeroAction extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _HeroAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: theme.colorScheme.onSurface.withOpacity(0.75),
-            ),
-            const SizedBox(width: 9),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HeroDivider extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 22,
-      child: VerticalDivider(
-        width: 1,
-        color: Theme.of(context).brightness == Brightness.dark
-            ? MyTheme.borderDark
-            : MyTheme.borderLight,
-      ),
-    );
-  }
-}
-
-Future<String?> _askRemoteId(BuildContext context) {
-  return showDialog<String>(
-    context: context,
-    builder: (dialogContext) {
-      var id = '';
-      void submit() {
-        final value = trimID(id);
-        if (value.isNotEmpty) {
-          Navigator.of(dialogContext).pop(value);
-        }
-      }
-
-      return AlertDialog(
-        contentPadding: EdgeInsets.zero,
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  translate('Connect'),
-                  style: Theme.of(dialogContext).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  translate('Enter Remote ID'),
-                  style: Theme.of(dialogContext).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  autofocus: true,
-                  textInputAction: TextInputAction.go,
-                  inputFormatters: [IDTextInputFormatter()],
-                  decoration: InputDecoration(
-                    hintText: translate('Enter Remote ID'),
-                    prefixIcon: const Icon(Icons.numbers_rounded, size: 20),
-                  ),
-                  onChanged: (value) => id = value,
-                  onSubmitted: (_) => submit(),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      child: Text(translate('Cancel')),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: submit,
-                      child: Text(translate('Connect')),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    },
-  );
-}
-
 /// Connection page for connecting to a remote peer.
 class ConnectionPage extends StatefulWidget {
-  final Peer? selectedPeer;
-  final bool showAllDevices;
-
-  const ConnectionPage({Key? key, this.selectedPeer, this.showAllDevices = false})
-      : super(key: key);
+  const ConnectionPage({Key? key}) : super(key: key);
 
   @override
   State<ConnectionPage> createState() => _ConnectionPageState();
@@ -359,16 +215,13 @@ class _ConnectionPageState extends State<ConnectionPage>
   Iterable<Peer> _autocompleteOpts = [];
 
   final _menuOpen = false.obs;
-  final _heroHovered = ValueNotifier(false);
 
   @override
   void initState() {
     super.initState();
     _allPeersLoader.init(setState);
     _idFocusNode.addListener(onFocusChanged);
-    if (widget.selectedPeer != null) {
-      _idController.id = widget.selectedPeer!.id;
-    } else if (_idController.text.isEmpty) {
+    if (_idController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         final lastRemoteId = await bind.mainGetLastRemoteId();
         if (lastRemoteId != _idController.id) {
@@ -384,17 +237,7 @@ class _ConnectionPageState extends State<ConnectionPage>
   }
 
   @override
-  void didUpdateWidget(covariant ConnectionPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.selectedPeer?.id != oldWidget.selectedPeer?.id &&
-        widget.selectedPeer != null) {
-      _idController.id = widget.selectedPeer!.id;
-    }
-  }
-
-  @override
   void dispose() {
-    _heroHovered.dispose();
     _idController.dispose();
     windowManager.removeListener(this);
     _allPeersLoader.clear();
@@ -463,481 +306,22 @@ class _ConnectionPageState extends State<ConnectionPage>
     final isOutgoingOnly = bind.isOutgoingOnly();
     return Column(
       children: [
-        _buildWorkspaceHeader(context),
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final horizontalPadding =
-                  (constraints.maxWidth * 0.06).clamp(24.0, 80.0).toDouble();
-              final heroHeight =
-                  ((constraints.maxWidth - horizontalPadding * 2) / 2.5)
-                      .clamp(160.0, 440.0).toDouble();
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (widget.showAllDevices)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-                        child: PeerTabPage(),
-                      ),
-                    )
-                  else
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: EdgeInsets.fromLTRB(
-                            horizontalPadding, 32, horizontalPadding, 32),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            SizedBox(
-                              height: heroHeight + 64,
-                              child: MouseRegion(
-                                onEnter: (_) => _heroHovered.value = true,
-                                onExit: (_) => _heroHovered.value = false,
-                                child: _buildHeroCard(context, heroHeight),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (!isOutgoingOnly) const Divider(height: 1),
-                  if (!isOutgoingOnly)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: OnlineStatusWidget(),
-                    ),
-                ],
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildWorkspaceHeader(BuildContext context) {
-    if (widget.showAllDevices) return _buildDeviceListHeader(context);
-    final theme = Theme.of(context);
-    final peer = widget.selectedPeer;
-    final online = peer?.online ?? true;
-    final name = peer == null
-        ? Platform.localHostname
-        : (peer.hostname.isNotEmpty
-            ? peer.hostname
-            : (peer.alias.isNotEmpty ? peer.alias : peer.id));
-    return Container(
-      height: 64,
-      padding: const EdgeInsets.fromLTRB(28, 0, 20, 0),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.brightness == Brightness.dark
-                ? MyTheme.borderDark
-                : MyTheme.borderLight,
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-            decoration: BoxDecoration(
-              color: const Color(0xFF111315),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: online
-                        ? const Color(0xFF35B66A)
-                        : const Color(0xFF9CA3AF),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  online
-                      ? translate('Online')
-                      : translate('Offline'),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Row(children: [
-              Flexible(
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              PopupMenuButton<String>(
-                tooltip: translate('More'),
-                icon: Icon(
-                  Icons.more_vert,
-                  size: 21,
-                  color: theme.colorScheme.onSurface.withOpacity(0.72),
-                ),
-                onSelected: (value) {
-                  switch (value) {
-                    case 'file':
-                      onConnect(isFileTransfer: true);
-                      break;
-                    case 'camera':
-                      onConnect(isViewCamera: true);
-                      break;
-                    case 'terminal':
-                      onConnect(isTerminal: true);
-                      break;
-                    case 'tunnel':
-                      onConnect(isTcpTunneling: true);
-                      break;
-                  }
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'file',
-                    child: Text(translate('Transfer file')),
-                  ),
-                  PopupMenuItem(
-                    value: 'camera',
-                    child: Text(translate('View camera')),
-                  ),
-                  PopupMenuItem(
-                    value: 'terminal',
-                    child: Text(translate('Terminal')),
-                  ),
-                  PopupMenuItem(
-                    value: 'tunnel',
-                    child: Text(translate('TCP tunneling')),
-                  ),
-                ],
-              ),
-            ]),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDeviceListHeader(BuildContext context) {
-    final theme = Theme.of(context);
-    final model = gFFI.peerTabModel;
-    return ListenableBuilder(
-      listenable: model,
-      builder: (context, _) => Container(
-        height: 64,
-        padding: const EdgeInsets.symmetric(horizontal: 28),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          border: Border(bottom: BorderSide(color: theme.dividerColor)),
-        ),
-        child: Row(children: [
-          Icon(Icons.devices_outlined,
-              size: 23, color: theme.colorScheme.primary),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              model.currentTab == 0
-                  ? translate('All devices')
-                  : model.tabTooltip(model.currentTab),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleLarge
-                  ?.copyWith(fontSize: 22, fontWeight: FontWeight.w700),
-            ),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  Widget _buildHeroCard(BuildContext context, double heroHeight) {
-    final theme = Theme.of(context);
-    final peer = widget.selectedPeer;
-    final hasPeer = peer != null;
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(
-          color: theme.brightness == Brightness.dark
-              ? MyTheme.borderDark
-              : MyTheme.borderLight,
-        ),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: Column(
+            child: Column(
           children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  ClipRect(
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: _heroHovered,
-                      builder: (context, hovered, child) =>
-                          TweenAnimationBuilder<double>(
-                        duration: const Duration(milliseconds: 160),
-                        curve: Curves.easeOut,
-                        tween: Tween(end: hovered ? 4.0 : 0.0),
-                        child: child,
-                        builder: (context, blur, child) => ImageFiltered(
-                          enabled: blur > 0,
-                          imageFilter: ImageFilter.blur(
-                            sigmaX: blur,
-                            sigmaY: blur,
-                            tileMode: TileMode.clamp,
-                          ),
-                          child: child,
-                        ),
-                      ),
-                      child: Image.asset(
-                        'assets/desktop_workspace_wallpaper.png',
-                        fit: BoxFit.cover,
-                        filterQuality: FilterQuality.medium,
-                      ),
-                    ),
-                  ),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withOpacity(0.08),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Material(
-                    type: MaterialType.transparency,
-                    child: InkWell(
-                      mouseCursor: SystemMouseCursors.click,
-                      hoverColor: Colors.transparent,
-                      highlightColor: Colors.white.withOpacity(0.2),
-                      onTap: () {
-                        if (hasPeer) {
-                          onConnect();
-                        } else {
-                          _showConnectPanel();
-                        }
-                      },
-                      child: Align(
-                        alignment: const Alignment(0, 0.8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 10,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                translate('Enter desktop'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w500,
-                                  shadows: [Shadow(blurRadius: 8, color: Colors.black38)],
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              const Icon(
-                                Icons.arrow_forward_rounded,
-                                color: Colors.white,
-                                size: 24,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              height: 64,
-              color: theme.colorScheme.surface,
-              child: Row(
-                children: [
-                  _HeroAction(
-                    icon: Icons.folder_copy_outlined,
-                    label: translate('Transfer file'),
-                    onTap: () => onConnect(isFileTransfer: true),
-                  ),
-                  _HeroDivider(),
-                  _HeroAction(
-                    icon: Icons.videocam_outlined,
-                    label: translate('View camera'),
-                    onTap: () => onConnect(isViewCamera: true),
-                  ),
-                  _HeroDivider(),
-                  _HeroAction(
-                    icon: Icons.terminal_rounded,
-                    label: translate('Terminal'),
-                    onTap: () => onConnect(isTerminal: true),
-                  ),
-                  _HeroDivider(),
-                  _HeroAction(
-                    icon: Icons.settings_ethernet_rounded,
-                    label: translate('TCP tunneling'),
-                    onTap: () => onConnect(isTcpTunneling: true),
-                  ),
-                  _HeroDivider(),
-                  SizedBox(
-                    width: 62,
-                    child: Tooltip(
-                      message: translate('More'),
-                      child: InkWell(
-                        onTap: _showMoreTools,
-                        child: const Center(
-                          child: Icon(Icons.grid_view_outlined, size: 22),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            Row(
+              children: [
+                Flexible(child: _buildRemoteIDTextField(context)),
+              ],
+            ).marginOnly(top: 22),
+            SizedBox(height: 12),
+            Divider().paddingOnly(right: 12),
+            Expanded(child: PeerTabPage()),
           ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showMoreTools() {
-    final peer = widget.selectedPeer;
-    Peer? lanPeer;
-    if (peer != null) {
-      for (final lan in gFFI.lanPeersModel.peers) {
-        if (lan.id == peer.id || lan.ipAddresses.split(',').contains(peer.id)) {
-          lanPeer = lan;
-          break;
-        }
-      }
-    }
-    final wakeId = lanPeer?.id;
-
-    Future<void> startTool({
-      bool isFileTransfer = false,
-      bool isViewCamera = false,
-      bool isTerminal = false,
-      bool isTcpTunneling = false,
-    }) async {
-      final id = peer?.id ?? await _askRemoteId(context);
-      if (!mounted || id == null) return;
-      await connect(context, id,
-          isFileTransfer: isFileTransfer,
-          isViewCamera: isViewCamera,
-          isTerminal: isTerminal,
-          isTcpTunneling: isTcpTunneling);
-    }
-
-    return showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        final theme = Theme.of(dialogContext);
-        Widget tool(IconData icon, String label, VoidCallback? action) {
-          return Material(
-            color: action == null
-                ? theme.colorScheme.surface
-                : Color.alphaBlend(
-                    MyTheme.accent.withOpacity(0.045),
-                    theme.colorScheme.surface,
-                  ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(5),
-              side: BorderSide(color: theme.dividerColor),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              minTileHeight: 54,
-              leading: Icon(icon),
-              title: Text(translate(label)),
-              trailing: const Icon(Icons.chevron_right, size: 18),
-              enabled: action != null,
-              onTap: action == null
-                  ? null
-                  : () {
-                      Navigator.pop(dialogContext);
-                      action();
-                    },
-            ),
-          );
-        }
-
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          titlePadding: EdgeInsets.zero,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
-                child: Text(translate('More')),
-              ),
-              const Divider(height: 1),
-            ],
-          ),
-          content: SizedBox(
-            width: 448,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  tool(Icons.folder_copy_outlined, 'Transfer file',
-                      () => startTool(isFileTransfer: true)),
-                  const SizedBox(height: 5),
-                  tool(Icons.videocam_outlined, 'View camera',
-                      () => startTool(isViewCamera: true)),
-                  const SizedBox(height: 5),
-                  tool(Icons.terminal_rounded, 'Terminal',
-                      () => startTool(isTerminal: true)),
-                  if (isDesktop) ...[
-                    const SizedBox(height: 5),
-                    tool(Icons.settings_ethernet_rounded, 'TCP tunneling',
-                        () => startTool(isTcpTunneling: true)),
-                    const SizedBox(height: 5),
-                    tool(Icons.power_settings_new, 'WOL',
-                        wakeId == null ? null : () => bind.mainWol(id: wakeId)),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            SizedBox(
-              width: 210,
-              child: OutlinedButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(translate('Close')),
-              ),
-            ),
-          ],
-        );
-      },
+        ).paddingOnly(left: 12.0)),
+        if (!isOutgoingOnly) const Divider(height: 1),
+        if (!isOutgoingOnly) OnlineStatusWidget()
+      ],
     );
   }
 
@@ -949,27 +333,11 @@ class _ConnectionPageState extends State<ConnectionPage>
       bool isTerminal = false,
       bool isTcpTunneling = false}) {
     var id = _idController.id;
-    if (id.trim().isEmpty) {
-      _showConnectPanel();
-      return;
-    }
     connect(context, id,
         isFileTransfer: isFileTransfer,
         isViewCamera: isViewCamera,
         isTerminal: isTerminal,
         isTcpTunneling: isTcpTunneling);
-  }
-
-  Future<void> _showConnectPanel() async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          contentPadding: EdgeInsets.zero,
-          content: _buildRemoteIDTextField(dialogContext),
-        );
-      },
-    );
   }
 
   MenuEntrySubMenu<String> _requestApprovalMenu(BuildContext context) {
@@ -1008,28 +376,16 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// UI for the remote ID TextField.
   /// Search for a peer.
   Widget _buildRemoteIDTextField(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     var w = Container(
-      width: 440,
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+      width: 320 + 20 * 2,
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: const BorderRadius.all(Radius.circular(18)),
-        border: Border.all(
-          color: isDark ? MyTheme.borderDark : MyTheme.borderLight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.2 : 0.05),
-            blurRadius: 22,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-          mainAxisSize: MainAxisSize.min,
+          borderRadius: const BorderRadius.all(Radius.circular(13)),
+          border: Border.all(color: Theme.of(context).colorScheme.background)),
+      child: Ink(
+        child: Column(
           children: [
-            getConnectionPageTitle(context, false).marginOnly(bottom: 16),
+            getConnectionPageTitle(context, false).marginOnly(bottom: 15),
             Row(
               children: [
                 Expanded(
@@ -1099,20 +455,19 @@ class _ConnectionPageState extends State<ConnectionPage>
                           style: const TextStyle(
                             fontFamily: 'WorkSans',
                             fontSize: 22,
-                            fontWeight: FontWeight.w600,
-                            height: 1.25,
+                            height: 1.4,
                           ),
                           maxLines: 1,
                           cursorColor:
                               Theme.of(context).textTheme.titleLarge?.color,
                           decoration: InputDecoration(
-                              filled: true,
+                              filled: false,
                               counterText: '',
                               hintText: _idInputFocused.value
                                   ? null
                                   : translate('Enter Remote ID'),
                               contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 13)),
+                                  horizontal: 15, vertical: 13)),
                           controller: fieldTextEditingController,
                           inputFormatters: [IDTextInputFormatter()],
                           onChanged: (v) {
@@ -1149,21 +504,20 @@ class _ConnectionPageState extends State<ConnectionPage>
                           decoration: BoxDecoration(
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.14),
-                                blurRadius: 18,
-                                offset: const Offset(0, 8),
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 5,
+                                spreadRadius: 1,
                               ),
                             ],
                           ),
                           child: ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(5),
                               child: Material(
-                                elevation: 8,
-                                color: Theme.of(context).colorScheme.surface,
+                                elevation: 4,
                                 child: ConstrainedBox(
                                   constraints: BoxConstraints(
                                     maxHeight: maxHeight,
-                                    maxWidth: 390,
+                                    maxWidth: 319,
                                   ),
                                   child: _allPeersLoader.peers.isEmpty &&
                                           !_allPeersLoader.isPeersLoaded
@@ -1195,11 +549,14 @@ class _ConnectionPageState extends State<ConnectionPage>
               ],
             ),
             Padding(
-              padding: const EdgeInsets.only(top: 14.0),
+              padding: const EdgeInsets.only(top: 13.0),
               child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                 SizedBox(
-                  height: 40.0,
+                  height: 28.0,
                   child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
                     onPressed: () {
                       onConnect();
                     },
@@ -1208,11 +565,11 @@ class _ConnectionPageState extends State<ConnectionPage>
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  height: 40.0,
-                  width: 40.0,
+                  height: 28.0,
+                  width: 28.0,
                   decoration: BoxDecoration(
                     border: Border.all(color: Theme.of(context).dividerColor),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
                     child: StatefulBuilder(
@@ -1302,6 +659,7 @@ class _ConnectionPageState extends State<ConnectionPage>
             ),
           ],
         ),
+      ),
     );
     return Container(
         constraints: const BoxConstraints(maxWidth: 600), child: w);

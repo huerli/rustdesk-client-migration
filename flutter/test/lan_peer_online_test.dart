@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
+import 'package:flutter_hbb/common/widgets/peer_card.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -46,11 +46,12 @@ void main() {
       ..online = true
       ..ipAddresses = '192.168.1.20,10.0.0.20';
 
-    expect(recentPeersWithLanStatus(recent, [lan]).map((peer) => peer.online),
-        [true, true, true]);
+    Iterable<bool> displayStatus() =>
+        recent.map((peer) => peerWithLanStatus(peer, [lan]).online);
+
+    expect(displayStatus(), [true, true, true]);
     expect(recent.map((peer) => peer.online), [false, false, true]);
     lan.online = false;
-    expect(recentPeersWithLanStatus(recent, [lan]).map((peer) => peer.online),
-        [false, false, true]);
+    expect(displayStatus(), [false, false, true]);
   });
 }

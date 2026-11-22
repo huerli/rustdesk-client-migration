@@ -15,7 +15,6 @@ import '../../models/peer_model.dart';
 import '../../models/platform_model.dart';
 import '../../desktop/widgets/material_mod_popup_menu.dart' as mod_menu;
 import '../../desktop/widgets/popup_menu.dart';
-import '../../desktop/widgets/device_list_row.dart';
 import 'dart:math' as math;
 
 typedef PopupMenuEntryBuilder = Future<List<mod_menu.PopupMenuEntry<String>>>
@@ -26,6 +25,16 @@ enum PeerUiType { grid, tile, list }
 final peerCardUiType = PeerUiType.grid.obs;
 
 bool? hideUsernameOnCard;
+
+Peer peerWithLanStatus(Peer peer, Iterable<Peer> lanPeers) {
+  if (!peer.online &&
+      lanPeers.any((lan) =>
+          lan.online &&
+          (lan.id == peer.id || lan.ipAddresses.split(',').contains(peer.id)))) {
+    return Peer.copy(peer)..online = true;
+  }
+  return peer;
+}
 
 class _PeerCard extends StatefulWidget {
   final Peer peer;
@@ -105,6 +114,13 @@ class _PeerCardState extends State<_PeerCard>
         ),
       ),
     );
+    Widget buildCard(Peer displayPeer) =>
+        Obx(() => peerCardUiType.value == PeerUiType.grid
+            ? _buildPeerCard(context, displayPeer, deco)
+            : _buildPeerTile(context, displayPeer, deco));
+    final useLanStatus = isDesktop &&
+        widget.tab.index < PeerTabIndex.lan.index &&
+        Provider.of<PeerTabModel>(context).isEnabled[PeerTabIndex.lan.index];
     return MouseRegion(
       onEnter: (evt) {
         deco.value = BoxDecoration(
@@ -125,53 +141,18 @@ class _PeerCardState extends State<_PeerCard>
         );
       },
       child: gestureDetector(
-          child: Obx(() => peerCardUiType.value == PeerUiType.grid
-              ? _buildPeerCard(context, peer, deco)
-              : isDesktop &&
-                      peerCardUiType.value == PeerUiType.list &&
-                      widget.tab.index <= PeerTabIndex.lan.index
-                  ? _buildDeviceListRow(context, peer, deco)
-                  : _buildPeerTile(context, peer, deco))),
+          child: useLanStatus
+              ? ListenableBuilder(
+                  listenable: gFFI.lanPeersModel,
+                  builder: (context, _) =>
+                      buildCard(peerWithLanStatus(peer, gFFI.lanPeersModel.peers)),
+                )
+              : buildCard(peer)),
     );
   }
 
   bool _showNote(Peer peer) {
     return peerTabShowNote(widget.tab) && peer.note.isNotEmpty;
-  }
-
-  Widget _buildDeviceListRow(
-      BuildContext context, Peer peer, Rx<BoxDecoration?> deco) {
-    hideUsernameOnCard ??=
-        bind.mainGetBuildinOption(key: kHideUsernameOnCard) == 'Y';
-    final model = Provider.of<PeerTabModel>(context);
-    return ListenableBuilder(
-      listenable: gFFI.lanPeersModel,
-      builder: (context, _) {
-        var displayPeer = peer;
-        if (widget.tab != PeerTabIndex.lan &&
-            model.isEnabled[PeerTabIndex.lan.index] &&
-            !peer.online &&
-            gFFI.lanPeersModel.peers.any((lan) =>
-                lan.online &&
-                (lan.id == peer.id ||
-                    lan.ipAddresses.split(',').contains(peer.id)))) {
-          displayPeer = Peer.copy(peer)..online = true;
-        }
-        return Obx(() => Container(
-              foregroundDecoration: deco.value,
-              child: DeviceListRow(
-                peer: displayPeer,
-                selected: model.isPeerSelected(peer.id),
-                hideUsername: hideUsernameOnCard == true,
-                note: _showNote(peer) ? peer.note : '',
-                onConnect: model.multiSelectionMode
-                    ? null
-                    : () => widget.connect(context, peer.id),
-                actions: checkBoxOrActionMoreLandscape(peer, isTile: true),
-              ),
-            ));
-      },
-    );
   }
 
   makeChild(bool isPortrait, Peer peer) {

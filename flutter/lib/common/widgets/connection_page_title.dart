@@ -5,19 +5,18 @@ import 'package:get/get.dart';
 import '../../common.dart';
 
 Widget getConnectionPageTitle(BuildContext context, bool isWeb) {
+  final title = AutoSizeText(
+    translate('Control Remote Desktop'),
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    style: Theme.of(context).textTheme.titleLarge?.merge(TextStyle(height: 1)),
+  ).marginOnly(right: 4);
   return Row(
     children: [
       Expanded(
           child: Row(
         children: [
-          AutoSizeText(
-            translate('Control Remote Desktop'),
-            maxLines: 1,
-            style: Theme.of(context)
-                .textTheme
-                .titleLarge
-                ?.merge(TextStyle(height: 1)),
-          ).marginOnly(right: 4),
+          if (isWeb) title else Flexible(child: title),
           Tooltip(
             waitDuration: Duration(milliseconds: 300),
             message: translate(isWeb ? "web_id_input_tip" : "id_input_tip"),

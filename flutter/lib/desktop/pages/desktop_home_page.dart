@@ -10,11 +10,9 @@ import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
-import 'package:flutter_hbb/desktop/pages/desktop_assistance_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
-import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
@@ -28,18 +26,6 @@ import 'package:window_manager/window_manager.dart';
 import 'package:window_size/window_size.dart' as window_size;
 import '../widgets/button.dart';
 
-List<Peer> recentPeersWithLanStatus(List<Peer> recentPeers, List<Peer> lanPeers) {
-  return recentPeers.map((peer) {
-    if (peer.online ||
-        !lanPeers.any((lan) =>
-            lan.online &&
-            (lan.id == peer.id || lan.ipAddresses.split(',').contains(peer.id)))) {
-      return peer;
-    }
-    return Peer.copy(peer)..online = true;
-  }).toList();
-}
-
 class DesktopHomePage extends StatefulWidget {
   const DesktopHomePage({Key? key}) : super(key: key);
 
@@ -48,8 +34,6 @@ class DesktopHomePage extends StatefulWidget {
 }
 
 const borderColor = Color(0xFF2F65BA);
-
-enum _WorkspacePage { device, allDevices, assistance }
 
 class _DesktopHomePageState extends State<DesktopHomePage>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
@@ -67,38 +51,24 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Timer? _updateTimer;
   bool isCardClosed = false;
 
+  final RxBool _editHover = false.obs;
   final RxBool _block = false.obs;
-  Peer? _selectedPeer;
-  bool _myDevicesExpanded = true;
-  bool _remoteAssistExpanded = true;
-  _WorkspacePage _workspacePage = _WorkspacePage.device;
 
   final GlobalKey _childKey = GlobalKey();
-  late final _peerUpdates =
-      Listenable.merge([gFFI.recentPeersModel, gFFI.lanPeersModel]);
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final isIncomingOnly = bind.isIncomingOnly();
     return _buildBlock(
-      child: Container(
-        color: Theme.of(context).scaffoldBackgroundColor,
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            buildLeftPane(context),
-            if (!isIncomingOnly)
-              Expanded(
-                child: ListenableBuilder(
-                  listenable: _peerUpdates,
-                  builder: (context, _) => buildRightPane(context),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        buildLeftPane(context),
+        if (!isIncomingOnly) const VerticalDivider(width: 1),
+        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
+      ],
+    ));
   }
 
   Widget _buildBlock({required Widget child}) {
@@ -109,554 +79,135 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Widget buildLeftPane(BuildContext context) {
     final isIncomingOnly = bind.isIncomingOnly();
     final isOutgoingOnly = bind.isOutgoingOnly();
+    final children = <Widget>[
+      if (!isOutgoingOnly) buildPresetPasswordWarning(),
+      if (bind.isCustomClient())
+        Align(
+          alignment: Alignment.center,
+          child: loadPowered(context),
+        ),
+      Align(
+        alignment: Alignment.center,
+        child: loadLogo(),
+      ),
+      buildTip(context),
+      if (!isOutgoingOnly) buildIDBoard(context),
+      if (!isOutgoingOnly) buildPasswordBoard(context),
+      FutureBuilder<Widget>(
+        future: Future.value(
+            Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
+        builder: (_, data) {
+          if (data.hasData) {
+            if (isIncomingOnly) {
+              if (isInHomePage()) {
+                Future.delayed(Duration(milliseconds: 300), () {
+                  _updateWindowSize();
+                });
+              }
+            }
+            return data.data!;
+          } else {
+            return const Offstage();
+          }
+        },
+      ),
+    ];
     if (isIncomingOnly) {
-      return _buildIncomingOnlyPane(context);
+      children.addAll([
+        Divider(),
+        OnlineStatusWidget(
+          onSvcStatusChanged: () {
+            if (isInHomePage()) {
+              Future.delayed(Duration(milliseconds: 300), () {
+                _updateWindowSize();
+              });
+            }
+          },
+        ).marginOnly(bottom: 6, right: 6)
+      ]);
     }
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final textColor = Theme.of(context).textTheme.titleLarge?.color;
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Container(
-        width: (MediaQuery.of(context).size.width * 0.26).clamp(280.0, 480.0),
-        decoration: BoxDecoration(
-          color: isDark ? theme.colorScheme.background : const Color(0xFFF8F8F8),
-          border: Border(
-            right: BorderSide(
-              color: isDark ? MyTheme.borderDark : MyTheme.borderLight,
-            ),
-          ),
-        ),
-        child: Column(
-          children: [
-            if (!isOutgoingOnly) buildPresetPasswordWarning(),
-            const SizedBox(height: 38),
-            Expanded(
-              child: SingleChildScrollView(
-                controller: _leftPaneScrollController,
-                child: Column(
-                  key: _childKey,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (bind.isCustomClient())
-                      Align(
-                        alignment: Alignment.center,
-                        child: loadPowered(context),
-                      ),
-                    _buildSidebarSection(
-                      context,
-                      icon: Icons.devices_outlined,
-                      title: translate('My devices'),
-                      expanded: _myDevicesExpanded,
-                      onTap: () => setState(() {
-                        _myDevicesExpanded = !_myDevicesExpanded;
-                      }),
-                    ),
-                    if (_myDevicesExpanded) _buildRecentDeviceList(context),
-                    _buildSidebarAction(
-                      context,
-                      icon: Icons.grid_view_rounded,
-                      label: translate('All devices'),
-                      iconColor: MyTheme.accent,
-                      onTap: () => _switchPeerTab(PeerTabIndex.recent),
-                    ),
-                    _buildSidebarSection(
-                      context,
-                      icon: Icons.support_agent_rounded,
-                      title: translate('Remote assistance'),
-                      expanded: _remoteAssistExpanded,
-                      onTap: () => setState(() {
-                        _remoteAssistExpanded = !_remoteAssistExpanded;
-                      }),
-                    ),
-                    if (_remoteAssistExpanded) ...[
-                      _buildSidebarAction(
-                        context,
-                        icon: Icons.contact_support_outlined,
-                        label: translate('Start assistance'),
-                        iconColor: Colors.blue,
-                        selected: _workspacePage == _WorkspacePage.assistance,
-                        onTap: () => setState(
-                            () => _workspacePage = _WorkspacePage.assistance),
-                      ),
-                      _buildSidebarAction(
-                        context,
-                        icon: Icons.star_rounded,
-                        label: translate('Favorite devices'),
-                        iconColor: Colors.blue,
-                        onTap: () => _switchPeerTab(PeerTabIndex.fav),
-                      ),
-                    ],
-                    FutureBuilder<Widget>(
-                      future: Future.value(
-                          Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
-                      builder: (_, data) {
-                        if (data.hasData) {
-                          if (isIncomingOnly && isInHomePage()) {
-                            Future.delayed(Duration(milliseconds: 300), () {
-                              _updateWindowSize();
-                            });
-                          }
-                          return data.data!;
-                        }
-                        return const Offstage();
-                      },
-                    ),
-                    if (isIncomingOnly) ...[
-                      const Divider(),
-                      OnlineStatusWidget(
-                        onSvcStatusChanged: () {
-                          if (isInHomePage()) {
-                            Future.delayed(Duration(milliseconds: 300), () {
-                              _updateWindowSize();
-                            });
-                          }
-                        },
-                      ).marginOnly(bottom: 6, right: 6),
-                    ],
-                    const SizedBox(height: 12),
-                  ],
-                ),
-              ),
-            ),
-            _buildSidebarFooter(context),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIncomingOnlyPane(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: gFFI.serverModel,
-      child: Container(
-        width: 300,
+        width: isIncomingOnly ? 280.0 : 200.0,
         color: Theme.of(context).colorScheme.background,
-        child: Column(
+        child: Stack(
           children: [
-            Expanded(
-              child: SingleChildScrollView(
-                controller: _leftPaneScrollController,
-                child: Column(
-                  key: _childKey,
-                  children: [
-                    buildPresetPasswordWarning(),
-                    if (bind.isCustomClient())
-                      Align(
-                        alignment: Alignment.center,
-                        child: loadPowered(context),
-                      ),
-                    Align(
-                      alignment: Alignment.center,
-                      child: loadLogo(),
+            Column(
+              children: [
+                Flexible(
+                  child: SingleChildScrollView(
+                    controller: _leftPaneScrollController,
+                    child: Column(
+                      key: _childKey,
+                      children: children,
                     ),
-                    buildTip(context),
-                    buildIdentityCard(context),
-                    FutureBuilder<Widget>(
-                      future: Future.value(
-                          Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
-                      builder: (_, data) {
-                        if (data.hasData) {
-                          if (isInHomePage()) {
-                            Future.delayed(Duration(milliseconds: 300), () {
-                              _updateWindowSize();
-                            });
-                          }
-                          return data.data!;
-                        }
-                        return const Offstage();
-                      },
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
-            OnlineStatusWidget(
-              onSvcStatusChanged: () {
-                if (isInHomePage()) {
-                  Future.delayed(Duration(milliseconds: 300), () {
-                    _updateWindowSize();
-                  });
-                }
-              },
-            ).marginOnly(bottom: 6, right: 6),
+            if (isOutgoingOnly)
+              Positioned(
+                bottom: 6,
+                left: 12,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: InkWell(
+                    child: Obx(
+                      () => Icon(
+                        Icons.settings,
+                        color: _editHover.value
+                            ? textColor
+                            : Colors.grey.withOpacity(0.5),
+                        size: 22,
+                      ),
+                    ),
+                    onTap: () => {
+                      if (DesktopSettingPage.tabKeys.isNotEmpty)
+                        {
+                          DesktopSettingPage.switch2page(
+                              DesktopSettingPage.tabKeys[0])
+                        }
+                    },
+                    onHover: (value) => _editHover.value = value,
+                  ),
+                ),
+              )
           ],
         ),
       ),
     );
-  }
-
-  List<Peer> get _recentPeers => recentPeersWithLanStatus(
-      gFFI.recentPeersModel.peers,
-      gFFI.peerTabModel.isEnabled[PeerTabIndex.lan.index]
-          ? gFFI.lanPeersModel.peers
-          : const []);
-
-  Peer? get _currentPeer {
-    final peers = _recentPeers;
-    for (final peer in peers) {
-      if (peer.id == _selectedPeer?.id) return peer;
-    }
-    for (final peer in peers) {
-      if (peer.online) return peer;
-    }
-    return peers.isEmpty ? null : peers.first;
   }
 
   buildRightPane(BuildContext context) {
-    final showAssistance = _workspacePage == _WorkspacePage.assistance;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Visibility(
-          visible: !showAssistance,
-          maintainState: true,
-          child: Container(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            child: ConnectionPage(
-              selectedPeer: _currentPeer,
-              showAllDevices: _workspacePage == _WorkspacePage.allDevices,
-            ),
-          ),
-        ),
-        if (showAssistance)
-          ColoredBox(
-            color: Color.alphaBlend(
-              MyTheme.accent.withOpacity(0.035),
-              Theme.of(context).scaffoldBackgroundColor,
-            ),
-            child: DesktopAssistancePage(serviceStopped: svcStopped),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSidebarSection(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required bool expanded,
-    required VoidCallback onTap,
-  }) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 12, 18, 8),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: theme.colorScheme.onBackground.withOpacity(0.78),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                title,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            Icon(
-              expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-              size: 20,
-              color: theme.colorScheme.onBackground.withOpacity(0.55),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecentDeviceList(BuildContext context) {
-    final theme = Theme.of(context);
-    return ListenableBuilder(
-      listenable: _peerUpdates,
-      builder: (context, _) {
-        final peers = _recentPeers;
-        if (peers.isEmpty) {
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(22, 6, 22, 8),
-            child: Text(
-              translate('Empty'),
-              style: theme.textTheme.bodySmall,
-            ),
-          );
-        }
-        return Column(
-          children: peers
-              .take(6)
-              .map((peer) => _buildDeviceRow(context, peer))
-              .toList(),
-        );
-      },
-    );
-  }
-
-  Widget _buildDeviceRow(BuildContext context, Peer peer) {
-    final theme = Theme.of(context);
-    final selected = _workspacePage == _WorkspacePage.device &&
-        _currentPeer?.id == peer.id;
-    final deviceName = peer.hostname.isNotEmpty
-        ? peer.hostname
-        : (peer.alias.isNotEmpty ? peer.alias : peer.id);
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: () => setState(() {
-        _selectedPeer = peer;
-        _workspacePage = _WorkspacePage.device;
-      }),
-      child: Container(
-        height: 46,
-        margin: const EdgeInsets.fromLTRB(14, 1, 14, 4),
-        padding: const EdgeInsets.symmetric(horizontal: 18),
-        decoration: BoxDecoration(
-          color: selected
-              ? (theme.brightness == Brightness.dark
-                  ? theme.colorScheme.surface
-                    : const Color(0xFFE1E1E1))
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: peer.online
-                    ? const Color(0xFF32D52B)
-                    : Colors.transparent,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                color: peer.online ? const Color(0xFF3385FF) : Colors.grey,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Icon(
-                peer.platform == 'Windows'
-                    ? Icons.window_rounded
-                    : peer.platform == 'Mac OS'
-                        ? Icons.laptop_mac_rounded
-                        : Icons.computer_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                deviceName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontSize: 18,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  color: peer.online
-                      ? theme.colorScheme.onBackground
-                      : theme.colorScheme.onBackground.withOpacity(0.65),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSidebarAction(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required Color iconColor,
-    required VoidCallback onTap,
-    bool selected = false,
-  }) {
-    final theme = Theme.of(context);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        height: 42,
-        margin: const EdgeInsets.fromLTRB(44, 1, 16, 3),
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: selected
-            ? BoxDecoration(
-                color: theme.colorScheme.onSurface.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(6),
-              )
-            : null,
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: iconColor),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSidebarFooter(BuildContext context) {
-    final theme = Theme.of(context);
-    final hostname = Platform.localHostname;
-    return Obx(() {
-      final ready = !svcStopped.value &&
-          stateGlobal.svcStatus.value == SvcStatus.ready;
-      return Container(
-        height: 52,
-        padding: const EdgeInsets.fromLTRB(20, 0, 12, 0),
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(
-              color: theme.brightness == Brightness.dark
-                  ? MyTheme.borderDark
-                  : MyTheme.borderLight,
-            ),
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: ready ? const Color(0xFF35B66A) : kColorWarn,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Tooltip(
-                message: translate('Your Desktop'),
-                child: InkWell(
-                  onTap: () => showDialog<void>(
-                    context: context,
-                    builder: (dialogContext) => AlertDialog(
-                      contentPadding: EdgeInsets.zero,
-                      content: SizedBox(
-                        width: 304,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            buildTip(dialogContext),
-                            buildIdentityCard(dialogContext),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  child: Text(
-                    hostname,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-              ),
-            ),
-            InkWell(
-              borderRadius: BorderRadius.circular(10),
-              onTap: () {
-                if (DesktopSettingPage.tabKeys.isNotEmpty) {
-                  DesktopSettingPage.switch2page(
-                      DesktopSettingPage.tabKeys[0]);
-                }
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Icon(
-                  Icons.settings_outlined,
-                  size: 20,
-                  color: theme.colorScheme.onBackground.withOpacity(0.58),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    });
-  }
-
-  void _switchPeerTab(PeerTabIndex tab) {
-    gFFI.peerTabModel.setCurrentTab(tab.index);
-    if (tab == PeerTabIndex.recent) {
-      bind.mainLoadRecentPeers();
-    } else if (tab == PeerTabIndex.fav) {
-      bind.mainLoadFavPeers();
-    }
-    setState(() => _workspacePage = _WorkspacePage.allDevices);
-  }
-
-  Widget buildIdentityCard(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      margin: const EdgeInsets.fromLTRB(14, 2, 14, 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark ? MyTheme.borderDark : MyTheme.borderLight,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.18 : 0.04),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          buildIDBoard(context),
-          Divider(indent: 16, endIndent: 16),
-          buildPasswordBoard(context),
-        ],
-      ),
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: ConnectionPage(),
     );
   }
 
   buildIDBoard(BuildContext context) {
     final model = gFFI.serverModel;
     return Container(
-      margin: const EdgeInsets.only(left: 16, right: 8),
-      height: 68,
+      margin: const EdgeInsets.only(left: 20, right: 11),
+      height: 57,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
         children: [
           Container(
-            width: 3,
-            decoration: BoxDecoration(
-              color: MyTheme.accent,
-              borderRadius: BorderRadius.circular(2),
-            ),
+            width: 2,
+            decoration: const BoxDecoration(color: MyTheme.accent),
           ).marginOnly(top: 5),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(left: 10),
+              padding: const EdgeInsets.only(left: 7),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    height: 28,
+                    height: 25,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -692,8 +243,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                         ),
                         style: TextStyle(
                           fontSize: 22,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
                         ),
                       ).workaroundFreezeLinuxMint(),
                     ),
@@ -749,22 +298,19 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final showOneTime = model.approveMode != 'click' &&
         model.verificationMethod != kUsePermanentPassword;
     return Container(
-      margin: EdgeInsets.only(left: 16.0, right: 8, top: 10, bottom: 10),
+      margin: EdgeInsets.only(left: 20.0, right: 16, top: 13, bottom: 13),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
         children: [
           Container(
-            width: 3,
+            width: 2,
             height: 52,
-            decoration: BoxDecoration(
-              color: MyTheme.accent,
-              borderRadius: BorderRadius.circular(2),
-            ),
+            decoration: BoxDecoration(color: MyTheme.accent),
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(left: 10),
+              padding: const EdgeInsets.only(left: 7),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -848,7 +394,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final isOutgoingOnly = bind.isOutgoingOnly();
     return Padding(
       padding:
-          const EdgeInsets.only(left: 18.0, right: 18, top: 18.0, bottom: 10),
+          const EdgeInsets.only(left: 20.0, right: 16, top: 16.0, bottom: 5),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1061,31 +607,22 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
     }
 
-    final isWarning = title == "Warning";
     return Stack(
       children: [
         Container(
           margin: EdgeInsets.fromLTRB(
-              14, marginTop, 14, bind.isIncomingOnly() ? marginTop : 0),
+              0, marginTop, 0, bind.isIncomingOnly() ? marginTop : 0),
           child: Container(
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: isWarning
-                      ? [Color(0xFFF59E0B), Color(0xFFEA580C)]
-                      : [Color(0xFF2563EB), Color(0xFF0EA5E9)],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
-                    blurRadius: 18,
-                    offset: const Offset(0, 7),
-                  ),
+                  gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color.fromARGB(255, 226, 66, 188),
+                  Color.fromARGB(255, 244, 114, 124),
                 ],
-              ),
-              padding: EdgeInsets.all(18),
+              )),
+              padding: EdgeInsets.all(20),
               child: Column(
                   mainAxisAlignment: MainAxisAlignment.start,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1151,7 +688,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         if (closeButton != null && closeButton == true)
           Positioned(
             top: 18,
-            right: 2,
+            right: 0,
             child: IconButton(
               icon: Icon(
                 Icons.close,
@@ -1168,7 +705,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   void initState() {
     super.initState();
-    bind.mainLoadRecentPeers();
     if (!bind.isIncomingOnly() &&
         gFFI.peerTabModel.isEnabled[PeerTabIndex.lan.index]) {
       bind.mainLoadLanPeers();
@@ -1176,16 +712,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
       await gFFI.serverModel.fetchID();
       final tick = _updateTimer?.tick ?? 0;
-      if (!bind.isIncomingOnly() && isInHomePage() &&
-          (tick == 1 || tick % 20 == 0)) {
-        if (gFFI.peerTabModel.isEnabled[PeerTabIndex.lan.index]) {
-          bind.mainDiscover();
-        }
-        if (_workspacePage != _WorkspacePage.allDevices) {
-          final ids = gFFI.recentPeersModel.peers
-              .take(6).map((peer) => peer.id).toList();
-          if (ids.isNotEmpty) await bind.queryOnlines(ids: ids);
-        }
+      if (!bind.isIncomingOnly() &&
+          (tick == 1 || tick % 20 == 0) &&
+          isInHomePage() &&
+          gFFI.peerTabModel.isEnabled[PeerTabIndex.lan.index]) {
+        bind.mainDiscover();
       }
       final error = await bind.mainGetError();
       if (systemError != error) {
