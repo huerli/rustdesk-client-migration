@@ -102,6 +102,10 @@ const ICE_DEDUP_WINDOW: usize = 256;
 /// controller opens the data channel. The controller's own timeout still bounds an abandoned
 /// attempt.
 const WEBRTC_ANSWER_TIMEOUT_MS: u64 = CONNECT_TIMEOUT * 2;
+/// Listener-side probe phase cap for multiport and candidate UDP punching: aligned with the
+/// controller's 4s probe phase plus rendezvous RTT slack so dead cellular/CGNAT sweeps stop
+/// promptly instead of flooding for the full `CONNECT_TIMEOUT`.
+const UDP_PUNCH_ACCEPT_TIMEOUT_MS: u64 = 6_000;
 /// Answerers between an offer and an open data channel. An offer arrives before any password or
 /// accept prompt, and each one builds a peer connection that binds a socket per interface and
 /// runs ICE for up to `WEBRTC_ANSWER_TIMEOUT_MS`, where a forged TCP punch costs one connect.
@@ -1219,10 +1223,8 @@ impl RendezvousMediator {
                         if let Ok(sockets) =
                             bind_multiport_udp_sockets(punch_candidate_sockets(), local).await
                         {
-                            let mut ports =
+                            let ports =
                                 gather_udp_punch_ports(&sockets, server_addr, 800).await;
-                            ports.sort_unstable();
-                            ports.dedup();
                             if !ports.is_empty() {
                                 if let Some(answer) =
                                     endpoint_with_punch_ports(&webrtc_sdp_answer, &ports)
@@ -1353,10 +1355,11 @@ impl RendezvousMediator {
         // predicted range, and the sockets are the ones whose ports the controller was told
         // about. A failure here is clean: the controller keeps its WebRTC and relay attempts.
         if let Some(sockets) = candidate_sockets.filter(|_| !controller_punch_ports.is_empty()) {
-            let targets = controller_punch_ports
-                .iter()
-                .map(|port| SocketAddr::new(peer_addr.ip(), *port))
-                .collect::<Vec<_>>();
+            let targets = crate::common::expand_punch_targets(
+                peer_addr.ip(),
+                &controller_punch_ports,
+                Some(peer_addr.port()),
+            );
             return udp_punch_candidates_accept(
                 sockets,
                 targets,
@@ -1675,7 +1678,7 @@ async fn udp_multiport_accept(
         sockets,
         peer_addr,
         true,
-        Duration::from_millis(CONNECT_TIMEOUT.max(3000)),
+        Duration::from_millis(UDP_PUNCH_ACCEPT_TIMEOUT_MS),
         config,
     )
     .await?;
@@ -1713,7 +1716,7 @@ async fn udp_punch_candidates_accept(
         sockets,
         targets,
         true,
-        Duration::from_millis(CONNECT_TIMEOUT.max(3000)),
+        Duration::from_millis(UDP_PUNCH_ACCEPT_TIMEOUT_MS),
     )
     .await?;
     log::info!(

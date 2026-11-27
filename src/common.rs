@@ -2989,6 +2989,13 @@ struct MultiportPunchCounters {
     probes_sent: AtomicU32,
     probes_seen: AtomicU32,
     recv_errors: AtomicU32,
+    any_reply: AtomicBool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MultiportPunchLimits {
+    max_total_probes: u32,
+    early_abort_after: Duration,
 }
 
 type MultiportPunchWinner = (Arc<UdpSocket>, SocketAddr, Option<bytes::BytesMut>);
@@ -3008,15 +3015,132 @@ pub fn multiport_punch_config(peer: SocketAddr) -> Option<MultiportPunchConfig> 
         return None;
     }
     let socket_count = env_value::<usize>("RUSTDESK_MULTIPORT_PUNCH_SOCKETS")
-        .unwrap_or(128)
+        .unwrap_or(32)
         .clamp(2, 256);
     let port_radius = env_value::<u16>("RUSTDESK_MULTIPORT_PUNCH_PORT_RADIUS")
-        .unwrap_or(64)
+        .unwrap_or(32)
         .clamp(1, 256);
     Some(MultiportPunchConfig {
         socket_count,
         port_radius,
     })
+}
+
+fn multiport_punch_max_probes(default_limit: u32) -> u32 {
+    match env_value::<u32>("RUSTDESK_MULTIPORT_MAX_PROBES") {
+        Some(0) => u32::MAX,
+        Some(n) => n.max(16),
+        None => default_limit,
+    }
+}
+
+fn punch_early_abort_duration(default_ms: u64, max_time: Duration) -> Duration {
+    match env_value::<u64>("RUSTDESK_PUNCH_EARLY_ABORT_MS") {
+        Some(0) => max_time,
+        Some(ms) => Duration::from_millis(ms.max(500)).min(max_time),
+        None => Duration::from_millis(default_ms).min(max_time),
+    }
+}
+
+fn try_reserve_probe(counter: &AtomicU32, limit: u32) -> bool {
+    if limit == u32::MAX {
+        counter.fetch_add(1, Ordering::Relaxed);
+        return true;
+    }
+    loop {
+        let cur = counter.load(Ordering::Relaxed);
+        if cur >= limit {
+            return false;
+        }
+        if counter
+            .compare_exchange_weak(cur, cur + 1, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return true;
+        }
+    }
+}
+
+fn dedup_ports_preserve_order(ports: impl IntoIterator<Item = u16>) -> Vec<u16> {
+    let mut out = Vec::new();
+    for port in ports {
+        if port > 0 && !out.contains(&port) {
+            out.push(port);
+        }
+    }
+    out
+}
+
+/// Detect a linear port-allocation stride from consecutively observed public ports.
+/// Returns `Some(delta)` when at least half of consecutive transitions share the same
+/// non-zero stride in `1..=16`, and `None` for constant (cone) or random symmetric NATs.
+pub fn infer_nat_port_stride(ports: &[u16]) -> Option<i32> {
+    if ports.len() < 3 {
+        return None;
+    }
+    let mut counts: HashMap<i32, usize> = HashMap::new();
+    let transitions = ports.len() - 1;
+    for pair in ports.windows(2) {
+        let delta = pair[1] as i32 - pair[0] as i32;
+        if delta != 0 && delta.abs() <= 16 {
+            *counts.entry(delta).or_insert(0) += 1;
+        }
+    }
+    let (best_delta, best_count) = counts.into_iter().max_by_key(|&(_, count)| count)?;
+    (best_count >= 2 && best_count * 2 >= transitions).then_some(best_delta)
+}
+
+/// Build the UDP candidate target list for a peer: keep its advertised ports (and observed
+/// base port), then append stride-predicted continuation ports when a linear NAT allocation
+/// pattern is detected so newly mapped destination ports can be hit without blind flooding.
+pub fn expand_punch_targets(
+    peer_ip: std::net::IpAddr,
+    advertised_ports: &[u16],
+    base_port: Option<u16>,
+) -> Vec<SocketAddr> {
+    let mut ports = dedup_ports_preserve_order(advertised_ports.iter().copied());
+    if let Some(base) = base_port {
+        if base > 0 && !ports.contains(&base) {
+            ports.push(base);
+        }
+    }
+    let stride = infer_nat_port_stride(&ports).or_else(|| {
+        let mut sorted = ports.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        infer_nat_port_stride(&sorted)
+    });
+    if let Some(delta) = stride {
+        if let (Some(&min_port), Some(&max_port)) = (ports.iter().min(), ports.iter().max()) {
+            let (forward_anchor, backward_anchor) = if delta > 0 {
+                (max_port as i32, min_port as i32)
+            } else {
+                (min_port as i32, max_port as i32)
+            };
+            for step in 1..=8 {
+                let candidate = forward_anchor + delta * step;
+                if (1..=u16::MAX as i32).contains(&candidate) {
+                    let port = candidate as u16;
+                    if !ports.contains(&port) && ports.len() < 64 {
+                        ports.push(port);
+                    }
+                }
+            }
+            for step in 1..=2 {
+                let candidate = backward_anchor - delta * step;
+                if (1..=u16::MAX as i32).contains(&candidate) {
+                    let port = candidate as u16;
+                    if !ports.contains(&port) && ports.len() < 64 {
+                        ports.push(port);
+                    }
+                }
+            }
+        }
+    }
+    ports
+        .into_iter()
+        .map(|port| SocketAddr::new(peer_ip, port))
+        .collect()
 }
 
 /// Envelope key carrying the UDP ports this side will punch from. It rides the WebRTC offer and
@@ -3126,10 +3250,7 @@ pub async fn gather_udp_punch_ports(
             }
         });
     }
-    let mut ports: Vec<u16> = join_all(futs).await.into_iter().flatten().collect();
-    ports.sort_unstable();
-    ports.dedup();
-    ports
+    dedup_ports_preserve_order(join_all(futs).await.into_iter().flatten())
 }
 
 pub async fn bind_multiport_udp_sockets(
@@ -3204,6 +3325,7 @@ async fn punch_udp_multiport_socket(
     targets: Arc<Vec<SocketAddr>>,
     listen: bool,
     max_time: Duration,
+    limits: MultiportPunchLimits,
     tid: u64,
     counters: Arc<MultiportPunchCounters>,
 ) -> ResultType<MultiportPunchWinner> {
@@ -3215,11 +3337,14 @@ async fn punch_udp_multiport_socket(
     let mut data = [0u8; 1500];
     let start = Instant::now();
     let deadline = start + max_time;
-    // Stagger source sockets so the peer sees a rolling spray instead of one packet burst.
-    let mut next_probe = start + Duration::from_millis((local_port as u64 % 25) + 1);
+    let early_abort_deadline = start + limits.early_abort_after.min(max_time);
+    let mut early_abort_pending = early_abort_deadline < deadline;
+    // Stagger source sockets across 80ms so the peer and local NAT see paced traffic instead of a burst.
+    let mut next_probe = start + Duration::from_millis((local_port as u64 % 80) + 1);
     let mut target_index = local_port as usize % targets.len();
     let mut round = 0u32;
     let mut acked = false;
+    let mut budget_exhausted = false;
 
     loop {
         tokio::select! {
@@ -3230,18 +3355,37 @@ async fn punch_udp_multiport_socket(
                     "multiport UDP punch is timed out, {sent} probes sent, {seen} probes received, acked: {acked}"
                 );
             }
-            _ = tokio::time::sleep_until(next_probe) => {
-                // Eight destinations per socket per round covers the full prediction range in a
-                // few hundred milliseconds without creating a single unbounded packet burst.
-                for _ in 0..8.min(targets.len()) {
+            _ = tokio::time::sleep_until(early_abort_deadline), if early_abort_pending => {
+                early_abort_pending = false;
+                let sent = counters.probes_sent.load(Ordering::Relaxed);
+                if !counters.any_reply.load(Ordering::Relaxed)
+                    && sent >= (targets.len().min(limits.max_total_probes as usize) as u32)
+                {
+                    bail!(
+                        "multiport UDP punch early abort after {:?}, {sent} probes sent, 0 replies",
+                        start.elapsed()
+                    );
+                }
+            }
+            _ = tokio::time::sleep_until(next_probe), if !budget_exhausted => {
+                // Two destinations per socket per round with exponential backoff keeps aggregate
+                // pps modest so cellular/hotspot NAT tables and concurrent WebRTC ICE are not starved.
+                for _ in 0..2.min(targets.len()) {
+                    if !try_reserve_probe(&counters.probes_sent, limits.max_total_probes) {
+                        budget_exhausted = true;
+                        break;
+                    }
                     let target = targets[target_index % targets.len()];
                     target_index = target_index.wrapping_add(1);
-                    if socket.send_to(&probe, target).await.is_ok() {
-                        counters.probes_sent.fetch_add(1, Ordering::Relaxed);
-                    }
+                    let _ = socket.send_to(&probe, target).await;
                 }
                 round = round.saturating_add(1);
-                let interval = if round < 8 { 25 } else { 125 };
+                let interval = match round {
+                    0..=3 => 60,
+                    4..=9 => 120,
+                    10..=17 => 220,
+                    _ => 350,
+                };
                 next_probe = Instant::now() + Duration::from_millis(interval);
             }
             res = socket.recv_from(&mut data) => {
@@ -3256,16 +3400,19 @@ async fn punch_udp_multiport_socket(
                         }
                         let ack = punch_tid(&data[..n], &PUNCH_ACK);
                         if ack == Some(tid) {
+                            counters.any_reply.store(true, Ordering::Relaxed);
                             if !listen {
                                 return Ok((socket, source, None));
                             }
                             acked = true;
                         } else if let Some(peer_tid) = punch_tid(&data[..n], &PUNCH_PROBE) {
+                            counters.any_reply.store(true, Ordering::Relaxed);
                             counters.probes_seen.fetch_add(1, Ordering::Relaxed);
                             let _ = socket
                                 .send_to(&punch_packet(&PUNCH_ACK, peer_tid), source)
                                 .await;
                         } else if n > 0 {
+                            counters.any_reply.store(true, Ordering::Relaxed);
                             // The peer has started KCP. Its SYN is sent once, so hand the exact
                             // socket and datagram to the accept path instead of dropping it.
                             return Ok((
@@ -3306,6 +3453,10 @@ pub async fn punch_udp_multiport(
             .map(|port| SocketAddr::new(peer_base.ip(), port))
             .collect::<Vec<_>>(),
     );
+    let limits = MultiportPunchLimits {
+        max_total_probes: multiport_punch_max_probes(2400),
+        early_abort_after: punch_early_abort_duration(if listen { 4500 } else { 2500 }, max_time),
+    };
     let counters = Arc::new(MultiportPunchCounters::default());
     let mut futures = Vec::with_capacity(sockets.len());
     for socket in sockets.into_iter() {
@@ -3318,6 +3469,7 @@ pub async fn punch_udp_multiport(
                 targets.clone(),
                 listen,
                 max_time,
+                limits,
                 tid,
                 counters.clone(),
             )
@@ -3361,6 +3513,10 @@ pub async fn punch_udp_candidates(
     }
     let peer_ip = first.ip();
     let targets = Arc::new(targets);
+    let limits = MultiportPunchLimits {
+        max_total_probes: multiport_punch_max_probes(1200),
+        early_abort_after: punch_early_abort_duration(if listen { 4500 } else { 2500 }, max_time),
+    };
     let counters = Arc::new(MultiportPunchCounters::default());
     let mut futures = Vec::with_capacity(sockets.len());
     for socket in sockets.into_iter() {
@@ -3373,6 +3529,7 @@ pub async fn punch_udp_candidates(
                 targets.clone(),
                 listen,
                 max_time,
+                limits,
                 tid,
                 counters.clone(),
             )
@@ -3584,6 +3741,52 @@ mod tests {
         assert_eq!(punch_port_candidates(1, 3), vec![1, 2, 3, 4]);
         assert_eq!(punch_port_candidates(65535, 2), vec![65535, 65534, 65533]);
         assert_eq!(punch_port_candidates(0, 2), vec![1, 2]);
+    }
+
+    #[test]
+    fn nat_stride_prediction_expands_linear_ports_and_ignores_random() {
+        assert_eq!(infer_nat_port_stride(&[40000, 40002, 40004, 40006]), Some(2));
+        assert_eq!(infer_nat_port_stride(&[40010, 40009, 40008]), Some(-1));
+        assert_eq!(infer_nat_port_stride(&[40000, 40000, 40000]), None);
+        assert_eq!(infer_nat_port_stride(&[12000, 48321, 22910, 61004]), None);
+
+        let peer_ip: std::net::IpAddr = "125.70.163.244".parse().unwrap();
+        let linear = expand_punch_targets(peer_ip, &[40000, 40002, 40004, 40006], None);
+        let linear_ports: Vec<u16> = linear.iter().map(SocketAddr::port).collect();
+        assert!(linear_ports.contains(&40008));
+        assert!(linear_ports.contains(&40010));
+        assert!(linear_ports.contains(&39998));
+
+        let random = expand_punch_targets(peer_ip, &[12000, 48321, 22910, 61004], Some(33333));
+        assert_eq!(random.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn multiport_punch_early_aborts_on_silent_peer_and_respects_probe_budget() {
+        let sender = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let target = silent.local_addr().unwrap();
+        let counters = Arc::new(MultiportPunchCounters::default());
+        let limits = MultiportPunchLimits {
+            max_total_probes: 4,
+            early_abort_after: Duration::from_millis(200),
+        };
+        let started = Instant::now();
+        let err = punch_udp_multiport_socket(
+            sender,
+            target.ip(),
+            Arc::new(vec![target]),
+            false,
+            Duration::from_secs(5),
+            limits,
+            42,
+            counters.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(err.to_string().contains("early abort"));
+        assert!(counters.probes_sent.load(Ordering::Relaxed) <= 4);
     }
 
     #[tokio::test]

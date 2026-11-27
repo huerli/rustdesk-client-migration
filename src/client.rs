@@ -592,7 +592,7 @@ impl Client {
             return race_transports_prefer_webrtc(
                 preferred_fut,
                 vec![fallback_fut],
-                Self::relay_fallback_delay_ms(),
+                Self::aligned_relay_fallback_delay_ms(),
                 // A WebRTC TURN session is still worth committing before a plain relay: it is a
                 // live, authenticated ICE session that can migrate to a direct pair later.
                 |result| result.0 .1 || result.0 .4 == "WebRTC",
@@ -664,13 +664,35 @@ impl Client {
     /// so capping only changes how long the user waits before it does. Env-tunable for slow links.
     const DIRECT_RACE_TIMEOUT_MS: u64 = 12_000;
 
-    fn direct_race_timeout(connect_timeout: u64) -> u64 {
-        let cap = std::env::var("RUSTDESK_DIRECT_RACE_TIMEOUT_MS")
+    fn direct_race_cap_ms() -> u64 {
+        std::env::var("RUSTDESK_DIRECT_RACE_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value >= 3000)
-            .unwrap_or(Self::DIRECT_RACE_TIMEOUT_MS);
-        connect_timeout.min(cap)
+            .unwrap_or(Self::DIRECT_RACE_TIMEOUT_MS)
+    }
+
+    fn direct_race_timeout(connect_timeout: u64) -> u64 {
+        connect_timeout.min(Self::direct_race_cap_ms())
+    }
+
+    fn aligned_relay_fallback_delay_ms() -> u64 {
+        Self::relay_fallback_delay_ms().min(Self::direct_race_cap_ms())
+    }
+
+    fn aligned_webrtc_race_timeout(
+        direct_timeout: u64,
+        relay_fallback_delay: u64,
+        has_relay: bool,
+        cap: u64,
+    ) -> (u64, u64) {
+        if has_relay {
+            let hold_window = relay_fallback_delay.min(cap);
+            let webrtc_timeout = direct_timeout.max(hold_window).min(cap);
+            (webrtc_timeout, hold_window)
+        } else {
+            (direct_timeout.max(relay_fallback_delay), relay_fallback_delay)
+        }
     }
 
     /// UDP-NAT-test wait when the TCP clock is implausible (see TCP_RTT_PLAUSIBLE_MIN). The
@@ -967,10 +989,8 @@ impl Client {
                             .ok()
                             .and_then(|mut addrs| addrs.find(|addr| addr.is_ipv4()));
                         if let Some(server) = server {
-                            let mut ports =
+                            let ports =
                                 crate::common::gather_udp_punch_ports(&sockets, server, 800).await;
-                            ports.sort_unstable();
-                            ports.dedup();
                             if !ports.is_empty() {
                                 log::debug!("advertising {} UDP punch candidates", ports.len());
                                 interface.connection_log(&format!(
@@ -1256,7 +1276,7 @@ impl Client {
                                 race_transports_prefer_webrtc(
                                     webrtc_fut,
                                     connect_futures,
-                                    Self::relay_fallback_delay_ms(),
+                                    Self::aligned_relay_fallback_delay_ms(),
                                     // A connected WebRTC session is upgradeable even when ICE
                                     // initially nominated its TURN pair. Commit it immediately so
                                     // the desktop can come up over relay, then let the still-live
@@ -1578,10 +1598,8 @@ impl Client {
         }
         let has_candidates = udp_candidates.is_some() && !peer_punch_ports.is_empty();
         if let Some(sockets) = udp_candidates.filter(|_| has_candidates) {
-            let targets = peer_punch_ports
-                .iter()
-                .map(|port| SocketAddr::new(peer.ip(), *port))
-                .collect::<Vec<_>>();
+            let targets =
+                crate::common::expand_punch_targets(peer.ip(), &peer_punch_ports, Some(peer.port()));
             direct_futures.push(
                 async move {
                     let (conn, kcp, typ) =
@@ -1641,6 +1659,12 @@ impl Client {
                 .boxed(),
             );
         }
+        let (webrtc_timeout, relay_hold_window) = Self::aligned_webrtc_race_timeout(
+            direct_timeout,
+            Self::relay_fallback_delay_ms(),
+            !relay_server.is_empty(),
+            Self::direct_race_cap_ms(),
+        );
         // Race a clone of the offerer; the guard retains its own clone so a losing/cancelled race
         // still closes the pc (select_ok drops the future's clone without closing).
         let webrtc_fut = webrtc_guard
@@ -1650,10 +1674,8 @@ impl Client {
                 let mut raced = stream.clone();
                 // The punch-tuned timeout can be as low as 1s — enough for a raw TCP SYN but not
                 // for candidate trickle + ICE checks + DTLS. Give WebRTC its own floor (prefer-P2P)
-                // so a viable P2P path is not abandoned before it can complete; TCP/UDP keep the
-                // tighter timeout, so a working direct connection still wins immediately, and the
-                // relay fallback only waits the extra time when direct attempts all failed.
-                let webrtc_timeout = direct_timeout.max(Self::relay_fallback_delay_ms());
+                // aligned with the direct-race cap so a stale relay-fallback-delay cannot hold a
+                // dead direct path past the relay fallback window.
                 async move {
                     raced.wait_connected(webrtc_timeout).await?;
                     // Resolve the pair here: a TURN win is relayed, not direct, and must be held
@@ -1671,7 +1693,7 @@ impl Client {
                 race_transports_prefer_webrtc(
                     webrtc_fut,
                     direct_futures,
-                    Self::relay_fallback_delay_ms(),
+                    relay_hold_window,
                     |r| r.3 || r.2 == "WebRTC",
                 )
                 .await
@@ -6329,6 +6351,26 @@ mod kx_tests {
         let (seen, decrypted) = handshake(KX_VERSION_LATEST, Some(0)).await;
         assert_eq!(seen.picked, 1);
         assert!(!seen.decrypted && !decrypted);
+    }
+
+    #[test]
+    fn test_aligned_webrtc_race_timeout_caps_stale_relay_fallback_delay() {
+        // A stale 30s relay-fallback-delay must not stretch the direct race past the 12s cap when
+        // a relay fallback is available.
+        assert_eq!(
+            Client::aligned_webrtc_race_timeout(4_000, 30_000, true, 12_000),
+            (12_000, 12_000)
+        );
+        // Normal 2.5s delay acts as the floor when direct_timeout is 1s (e.g. symmetric NAT).
+        assert_eq!(
+            Client::aligned_webrtc_race_timeout(1_000, 2_500, true, 12_000),
+            (2_500, 2_500)
+        );
+        // Without a relay server, keep the full configured budget.
+        assert_eq!(
+            Client::aligned_webrtc_race_timeout(12_000, 30_000, false, 12_000),
+            (30_000, 30_000)
+        );
     }
 }
 
