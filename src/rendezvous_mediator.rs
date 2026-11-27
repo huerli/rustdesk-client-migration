@@ -843,6 +843,27 @@ impl RendezvousMediator {
             fla.control_permissions.clone().into_option(),
             fla.controlled_context.clone().into_option(),
         );
+        // Same-intranet peers separated by a secondary NAT or one-way firewall may only be
+        // reachable in the reverse direction; answering the WebRTC offer lets ICE probe host
+        // candidates both ways (and fall back to TURN) alongside the legacy LAN TCP path.
+        let webrtc_viable = !fla.webrtc_sdp_offer.is_empty() && !Config::is_proxy();
+        let webrtc_sdp_answer = if webrtc_viable {
+            self.spawn_webrtc_answerer_for(
+                &fla.webrtc_sdp_offer,
+                &fla.socket_addr,
+                false,
+                server.clone(),
+                addr,
+                meta.clone(),
+            )
+            .await
+            .unwrap_or_else(|err| {
+                log::warn!("failed to create intranet WebRTC answer: {}", err);
+                String::new()
+            })
+        } else {
+            String::new()
+        };
         if peer_addr_v6.port() > 0 && !relay {
             socket_addr_v6 = start_ipv6(
                 peer_addr_v6,
@@ -853,13 +874,14 @@ impl RendezvousMediator {
             )
             .await;
         }
-        if is_ipv4(&self.addr) && !relay && !config::is_disable_tcp_listen() {
+        if is_ipv4(&self.addr) && !relay && (!config::is_disable_tcp_listen() || !webrtc_sdp_answer.is_empty()) {
             if let Err(err) = self
                 .handle_intranet_(
                     fla.clone(),
                     server.clone(),
                     relay_server.clone(),
                     socket_addr_v6.clone(),
+                    webrtc_sdp_answer.clone(),
                     meta.clone(),
                 )
                 .await
@@ -878,7 +900,7 @@ impl RendezvousMediator {
             true,
             true,
             socket_addr_v6,
-            String::new(),
+            webrtc_sdp_answer,
             meta,
         )
         .await
@@ -890,10 +912,34 @@ impl RendezvousMediator {
         server: ServerPtr,
         relay_server: String,
         socket_addr_v6: bytes::Bytes,
+        webrtc_sdp_answer: String,
         meta: ConnectionMeta,
     ) -> ResultType<()> {
         let peer_addr = AddrMangle::decode(&fla.socket_addr);
         log::debug!("Handle intranet from {:?}", peer_addr);
+        if !webrtc_sdp_answer.is_empty() {
+            // Mirror handle_punch_hole: send the WebRTC answer only on an encrypted channel and
+            // skip opening a LAN TCP listener (the controller's parallel plain-TCP leg still gets
+            // the legacy listener on its own offer-less FetchLocalAddr).
+            let mut socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
+            let local_addr = socket.local_addr();
+            let local_addr: SocketAddr =
+                format!("{}:{}", local_addr.ip(), local_addr.port()).parse()?;
+            crate::secure_tcp_required(&mut socket, &crate::get_key(true).await).await?;
+            let mut msg_out = Message::new();
+            msg_out.set_local_addr(LocalAddr {
+                id: Config::get_id(),
+                socket_addr: AddrMangle::encode(peer_addr).into(),
+                local_addr: AddrMangle::encode(local_addr).into(),
+                relay_server,
+                version: crate::VERSION.to_owned(),
+                socket_addr_v6,
+                webrtc_sdp_answer,
+                ..Default::default()
+            });
+            socket.send(&msg_out).await?;
+            return Ok(());
+        }
         // The listen this opens waits for the peer like a TCP punch and is declined like one; the
         // caller then relays, as it does when the listen fails for any other reason.
         let Some(slot) = TCP_PUNCHES.take() else {
@@ -941,6 +987,26 @@ impl RendezvousMediator {
         peer_addr: SocketAddr,
         meta: ConnectionMeta,
     ) -> ResultType<String> {
+        self.spawn_webrtc_answerer_for(
+            &ph.webrtc_sdp_offer,
+            &ph.socket_addr,
+            relay_only_ice,
+            server,
+            peer_addr,
+            meta,
+        )
+        .await
+    }
+
+    async fn spawn_webrtc_answerer_for(
+        &self,
+        webrtc_sdp_offer: &str,
+        return_route: &bytes::Bytes,
+        relay_only_ice: bool,
+        server: ServerPtr,
+        peer_addr: SocketAddr,
+        meta: ConnectionMeta,
+    ) -> ResultType<String> {
         let Some(slot) = AnswererSlot::take() else {
             hbb_common::throttled_log!(
                 ICE_LOG_INTERVAL,
@@ -951,10 +1017,10 @@ impl RendezvousMediator {
             return Ok(String::new());
         };
         let mut stream =
-            WebRTCStream::new(&ph.webrtc_sdp_offer, relay_only_ice, CONNECT_TIMEOUT).await?;
+            WebRTCStream::new(webrtc_sdp_offer, relay_only_ice, CONNECT_TIMEOUT).await?;
         let answer = stream.local_endpoint().to_owned();
         let session_key = stream.session_key().to_owned();
-        let return_route = ph.socket_addr.clone();
+        let return_route = return_route.clone();
 
         // A duplicate PunchHole (the offerer re-sends the same request across punch attempts)
         // resolves to the SESSIONS-cached stream. `take_local_ice_rx` yields the receiver
@@ -2144,5 +2210,36 @@ mod tests {
             "refreshed-relay.example",
             past_again
         ));
+    }
+
+    #[test]
+    fn intranet_webrtc_proto_wire_tags_match_server() {
+        let offer = "webrtc://intranet-offer";
+        let fla = super::FetchLocalAddr {
+            webrtc_sdp_offer: offer.to_owned(),
+            ..Default::default()
+        };
+        let fla_bytes = fla.write_to_bytes().unwrap();
+        assert_eq!(fla_bytes[0], 0x32);
+        assert_eq!(
+            super::FetchLocalAddr::parse_from_bytes(&fla_bytes)
+                .unwrap()
+                .webrtc_sdp_offer,
+            offer
+        );
+
+        let answer = "webrtc://intranet-answer";
+        let la = super::LocalAddr {
+            webrtc_sdp_answer: answer.to_owned(),
+            ..Default::default()
+        };
+        let la_bytes = la.write_to_bytes().unwrap();
+        assert_eq!(la_bytes[0], 0x3a);
+        assert_eq!(
+            super::LocalAddr::parse_from_bytes(&la_bytes)
+                .unwrap()
+                .webrtc_sdp_answer,
+            answer
+        );
     }
 }
