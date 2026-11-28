@@ -2,8 +2,12 @@
 // https://github.com/servo/core-foundation-rs
 // https://github.com/rust-windowing/winit
 
+mod input_source;
 mod update_temp;
 mod verified_dmg;
+pub(crate) use input_source::{
+    current_input_source_id, register_input_source_change_observer, toggle_input_source,
+};
 
 #[cfg(test)]
 #[path = "macos/verified_dmg_tests.rs"]

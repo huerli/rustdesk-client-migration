@@ -81,7 +81,9 @@ lazy_static::lazy_static! {
 }
 
 pub mod shortcuts;
+pub(crate) mod ime_switch;
 pub(crate) mod modifier_swap;
+pub(crate) mod window_switch;
 
 pub mod client {
     use super::*;
@@ -203,6 +205,8 @@ pub mod client {
 
                 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
                 KEYBOARD_HOOKED.store(true, Ordering::SeqCst);
+                #[cfg(target_os = "macos")]
+                super::ime_switch::on_macos_client_grab_change(true);
 
                 #[cfg(target_os = "linux")]
                 let had_owner = gs.owner.is_some();
@@ -295,6 +299,8 @@ pub mod client {
 
                 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
                 KEYBOARD_HOOKED.store(false, Ordering::SeqCst);
+                #[cfg(target_os = "macos")]
+                super::ime_switch::on_macos_client_grab_change(false);
 
                 gs.owner = None;
                 gs.last_grab = None;
@@ -319,6 +325,8 @@ pub mod client {
         }
         if let Some(to_release) = release_after_unlock {
             release_remote_keys_for_events(keyboard_mode, to_release);
+            #[cfg(target_os = "macos")]
+            super::window_switch::reset_macos_client_state();
         }
     }
 
@@ -730,7 +738,10 @@ fn start_grab_loop() {
             _ => Some(event),
         };
         #[cfg(target_os = "macos")]
-        rdev::set_is_main_thread(false);
+        {
+            rdev::set_is_main_thread(false);
+            ime_switch::start_macos_client_observer();
+        }
         #[cfg(target_os = "windows")]
         rdev::set_event_popup(false);
         if let Err(error) = rdev::grab(func) {
@@ -1071,6 +1082,24 @@ pub fn get_peer_platform() -> String {
         return session.peer_platform();
     }
     "Windows".to_string()
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn is_keyboard_hooked() -> bool {
+    KEYBOARD_HOOKED.load(Ordering::SeqCst)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn is_allow_swap_key_enabled() -> bool {
+    #[cfg(not(feature = "flutter"))]
+    if let Some(session) = CUR_SESSION.lock().unwrap().as_ref() {
+        return session.get_toggle_option("allow_swap_key".into());
+    }
+    #[cfg(feature = "flutter")]
+    if let Some(session) = flutter::get_cur_session() {
+        return session.get_toggle_option("allow_swap_key".into());
+    }
+    false
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

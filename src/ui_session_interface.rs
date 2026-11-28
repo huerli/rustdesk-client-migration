@@ -711,6 +711,25 @@ impl<T: InvokeUiSession> Session<T> {
     pub fn send_key_event(&self, evt: &KeyEvent) {
         // mode: legacy(0), map(1), translate(2), auto(3)
 
+        #[cfg(target_os = "macos")]
+        {
+            let use_cmd_tab = {
+                let config = self.lc.read().unwrap();
+                config.get_toggle_option("allow_swap_key")
+                    && config.info.platform.eq_ignore_ascii_case("windows")
+            };
+            if use_cmd_tab {
+                if let Some(events) = keyboard::window_switch::intercept_macos_client_key(evt) {
+                    for mapped in events {
+                        let mut msg_out = Message::new();
+                        msg_out.set_key_event(mapped);
+                        self.send(Data::Message(msg_out));
+                    }
+                    return;
+                }
+            }
+        }
+
         let mut msg = evt.clone();
         self.swap_modifier_key(&mut msg);
         let mut msg_out = Message::new();

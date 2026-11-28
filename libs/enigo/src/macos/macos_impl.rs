@@ -132,20 +132,45 @@ impl Enigo {
     pub fn add_flag(&mut self, key: &Key) {
         let flag = match key {
             &Key::CapsLock => CGEventFlags::CGEventFlagAlphaShift,
-            &Key::Shift => CGEventFlags::CGEventFlagShift,
-            &Key::Control => CGEventFlags::CGEventFlagControl,
-            &Key::Alt => CGEventFlags::CGEventFlagAlternate,
-            &Key::Meta => CGEventFlags::CGEventFlagCommand,
+            &Key::Shift | &Key::RightShift => CGEventFlags::CGEventFlagShift,
+            &Key::Control | &Key::RightControl => CGEventFlags::CGEventFlagControl,
+            &Key::Alt | &Key::RightAlt => CGEventFlags::CGEventFlagAlternate,
+            &Key::Meta | &Key::RWin => CGEventFlags::CGEventFlagCommand,
             &Key::NumLock => CGEventFlags::CGEventFlagNumericPad,
             _ => CGEventFlags::CGEventFlagNull,
         };
         self.flags |= flag;
     }
 
+    #[allow(non_upper_case_globals)]
+    fn is_modifier_keycode(keycode: u16) -> bool {
+        matches!(
+            keycode,
+            kVK_Shift
+                | kVK_RightShift
+                | kVK_Control
+                | kVK_RightControl
+                | kVK_Option
+                | kVK_RightOption
+                | kVK_Command
+                | kVK_RIGHT_COMMAND
+                | kVK_CapsLock
+        )
+    }
+
     // Just check F11 for minimal changes.
     // Since enigo (legacy mode) is deprecated, it is currently in maintenance only.
     fn post(&self, event: CGEvent, keycode: Option<u16>) {
-        if keycode == Some(kVK_F11) {
+        if keycode.map_or(false, Self::is_modifier_keycode) {
+            if !self.ignore_flags && self.flags != CGEventFlags::CGEventFlagNull {
+                event.set_flags(event.get_flags() | self.flags);
+            }
+            event.set_integer_value_field(
+                EventField::EVENT_SOURCE_USER_DATA,
+                ENIGO_INPUT_EXTRA_VALUE,
+            );
+            event.post(CGEventTapLocation::HID);
+        } else if keycode == Some(kVK_F11) {
             // Some key events require the flags to work.
             // We can't simply set the flag to `CGEventFlags::CGEventFlagNull`.
             // eg. `F11` requires flags `CGEventFlags::CGEventFlagSecondaryFn | 0x20000000` to work.

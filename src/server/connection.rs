@@ -258,8 +258,10 @@ struct InputMouse {
 enum MessageInput {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Mouse(InputMouse),
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(not(any(target_os = "android", target_os = "ios")), not(target_os = "macos")))]
     Key((KeyEvent, bool)),
+    #[cfg(target_os = "macos")]
+    Key((KeyEvent, bool, bool)),
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Pointer((PointerDeviceEvent, i32)),
     BlockOn,
@@ -1281,6 +1283,7 @@ impl Connection {
                             mouse_input.show_cursor,
                         );
                     }
+                    #[cfg(not(target_os = "macos"))]
                     MessageInput::Key((mut msg, press)) => {
                         // Set the press state to false, use `down` only in `handle_key()`.
                         msg.press = false;
@@ -1291,6 +1294,19 @@ impl Connection {
                         if press {
                             msg.down = false;
                             handle_key(&msg);
+                        }
+                    }
+                    #[cfg(target_os = "macos")]
+                    MessageInput::Key((mut msg, press, peer_is_windows)) => {
+                        // Set the press state to false, use `down` only in `handle_key()`.
+                        msg.press = false;
+                        if press {
+                            msg.down = true;
+                        }
+                        handle_key_from_peer(&msg, peer_is_windows);
+                        if press {
+                            msg.down = false;
+                            handle_key_from_peer(&msg, peer_is_windows);
                         }
                     }
                     MessageInput::Pointer((msg, id)) => {
@@ -2489,7 +2505,15 @@ impl Connection {
     fn input_key(&self, msg: KeyEvent, press: bool) {
         // to-do: if is the legacy mode, and the key is function key "LockScreen".
         // Switch to the primary display.
+        #[cfg(not(target_os = "macos"))]
         self.tx_input.send(MessageInput::Key((msg, press))).ok();
+        #[cfg(target_os = "macos")]
+        {
+            let peer_is_windows = self.lr.my_platform.eq_ignore_ascii_case("windows");
+            self.tx_input
+                .send(MessageInput::Key((msg, press, peer_is_windows)))
+                .ok();
+        }
     }
 
     // Auto Login: the password and Return the client would otherwise type itself, typed only if a

@@ -1289,6 +1289,13 @@ pub fn handle_mouse_simulation_(evt: &MouseEvent, conn: i32) {
     crate::platform::windows::try_change_desktop();
     let buttons = evt.mask >> 3;
     let evt_type = evt.mask & MOUSE_TYPE_MASK;
+    #[cfg(target_os = "macos")]
+    if matches!(
+        evt_type,
+        MOUSE_TYPE_DOWN | MOUSE_TYPE_WHEEL | MOUSE_TYPE_TRACKPAD
+    ) {
+        crate::keyboard::ime_switch::on_macos_server_mouse();
+    }
     let mut en = ENIGO.lock().unwrap();
     #[cfg(target_os = "macos")]
     en.set_ignore_flags(enigo_ignore_flags());
@@ -1591,9 +1598,28 @@ pub fn handle_key(evt: &KeyEvent) {
 #[inline]
 #[cfg(target_os = "macos")]
 pub fn handle_key(evt: &KeyEvent) {
+    handle_key_from_peer(evt, false);
+}
+
+#[inline]
+#[cfg(target_os = "macos")]
+pub fn handle_key_from_peer(evt: &KeyEvent, peer_is_windows: bool) {
     // having GUI, run main GUI thread, otherwise crash
     let evt = evt.clone();
-    QUEUE.exec_async(move || handle_key_(&evt));
+    QUEUE.exec_async(move || {
+        if peer_is_windows {
+            let events = crate::keyboard::window_switch::transform_macos_server_key(&evt);
+            for (idx, mapped) in events.iter().enumerate() {
+                if idx > 0 {
+                    key_sleep();
+                }
+                handle_key_(mapped);
+            }
+        } else {
+            handle_key_(&evt);
+        }
+        crate::keyboard::ime_switch::on_macos_server_key(&evt, peer_is_windows);
+    });
     // Key sleep is required for macOS.
     // If we don't sleep, the key press/release events may not take effect.
     //
@@ -1607,6 +1633,8 @@ pub fn handle_key(evt: &KeyEvent) {
 #[cfg(target_os = "macos")]
 #[inline]
 fn reset_input() {
+    crate::keyboard::ime_switch::reset_macos_server_state();
+    crate::keyboard::window_switch::reset_macos_server_state();
     unsafe {
         let _lock = VIRTUAL_INPUT_MTX.lock();
         VIRTUAL_INPUT_STATE = VirtualInputState::new();
